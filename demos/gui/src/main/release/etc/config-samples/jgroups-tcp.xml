@@ -16,7 +16,8 @@
          send_buf_size="640000"
          loopback="false"
          max_bundle_size="64k"
-         bundler_type="new"
+         max_bundle_timeout="30"
+         bundler_type="old"
          enable_diagnostics="true"
          thread_naming_pattern="cl"
 
