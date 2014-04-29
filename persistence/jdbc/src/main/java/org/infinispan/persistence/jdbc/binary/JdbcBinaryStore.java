@@ -1,13 +1,31 @@
 package org.infinispan.persistence.jdbc.binary;
 
 import org.infinispan.commons.configuration.ConfiguredBy;
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
+import java.sql.Connection;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.Callable;
+import java.util.concurrent.Executor;
+import java.util.concurrent.TimeUnit;
+
 import org.infinispan.commons.equivalence.Equivalence;
 import org.infinispan.commons.io.ByteBuffer;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.executors.ExecutorAllCompletionService;
 import org.infinispan.marshall.core.MarshalledEntry;
 import org.infinispan.metadata.InternalMetadata;
-import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.PersistenceUtil;
 import org.infinispan.persistence.TaskContextImpl;
 import org.infinispan.persistence.jdbc.JdbcUtil;
@@ -18,24 +36,10 @@ import org.infinispan.persistence.jdbc.connectionfactory.ManagedConnectionFactor
 import org.infinispan.persistence.jdbc.logging.Log;
 import org.infinispan.persistence.spi.AdvancedLoadWriteStore;
 import org.infinispan.persistence.spi.InitializationContext;
+import org.infinispan.persistence.spi.PersistenceException;
 import org.infinispan.persistence.support.Bucket;
 import org.infinispan.util.concurrent.locks.StripedLock;
 import org.infinispan.util.logging.LogFactory;
-
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.SQLException;
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.Callable;
-import java.util.concurrent.Executor;
 
 /**
  * {@link org.infinispan.persistence.spi.AdvancedLoadWriteStore} implementation that will store all the buckets as rows
@@ -256,7 +260,7 @@ public class JdbcBinaryStore implements AdvancedLoadWriteStore {
       final int batchSize = 100;
       ExecutorAllCompletionService eacs = new ExecutorAllCompletionService(threadPool);
       Set<Bucket> emptyBuckets = new HashSet<Bucket>(batchSize);
-      int taskCount = 0;
+      BlockingQueue<Integer> purgedBucketIds = new ArrayBlockingQueue(3 * batchSize);
       try {
          try {
             String sql = tableManipulation.getSelectExpiredRowsSql();
@@ -270,14 +274,12 @@ public class JdbcBinaryStore implements AdvancedLoadWriteStore {
                   if (log.isTraceEnabled()) {
                      log.tracef("Adding bucket keyed %s for purging.", bucketId);
                   }
-                  Bucket bucket;
                   InputStream binaryStream = rs.getBinaryStream(1);
-                  bucket = unmarshallBucket(binaryStream);
+                  Bucket bucket = unmarshallBucket(binaryStream);
                   bucket.setBucketId(bucketId);
                   expiredBuckets.add(bucket);
                   if (expiredBuckets.size() == batchSize) {
-                     eacs.submit(new BucketPurger(expiredBuckets, task, ctx.getMarshaller(), conn, emptyBuckets));
-                     taskCount++;
+                     eacs.submit(new BucketPurger(expiredBuckets, task, ctx.getMarshaller(), conn, emptyBuckets, purgedBucketIds));
                      expiredBuckets = new HashSet<Bucket>(batchSize);
                   }
                } else {
@@ -285,10 +287,13 @@ public class JdbcBinaryStore implements AdvancedLoadWriteStore {
                      log.tracef("Could not acquire write lock for %s, this won't be purged even though it has expired elements", bucketId);
                   }
                }
+               while ((bucketId = purgedBucketIds.poll()) != null) {
+                  unlock(bucketId);
+               }
             }
 
             if (!expiredBuckets.isEmpty())
-               eacs.submit(new BucketPurger(expiredBuckets, task, ctx.getMarshaller(), conn, emptyBuckets));
+               eacs.submit(new BucketPurger(expiredBuckets, task, ctx.getMarshaller(), conn, emptyBuckets, purgedBucketIds));
 
          } catch (Exception ex) {
             // if something happens make sure buckets locks are being release
@@ -300,10 +305,31 @@ public class JdbcBinaryStore implements AdvancedLoadWriteStore {
             JdbcUtil.safeClose(rs);
          }
 
+         Integer bucketId;
+         while (!eacs.isAllCompleted()) {
+            try {
+               for (;;) {
+                  bucketId = purgedBucketIds.poll(100, TimeUnit.MILLISECONDS);
+                  if (bucketId != null) {
+                     unlock(bucketId);
+                  } else {
+                     break;
+                  }
+               }
+            } catch (InterruptedException e) {
+               log.errorExecutingParallelStoreTask(e);
+               Thread.currentThread().interrupt();
+               return;
+            }
+         }
+         while ((bucketId = purgedBucketIds.poll()) != null) {
+            unlock(bucketId);
+         }
 
-         eacs.waitUntilAllCompleted();
          if (eacs.isExceptionThrown()) {
+            log.errorExecutingParallelStoreTask(eacs.getFirstException());
             releaseLocks(emptyBuckets);
+            return;
          }
 
          if (emptyBuckets.isEmpty())
@@ -355,42 +381,51 @@ public class JdbcBinaryStore implements AdvancedLoadWriteStore {
       private final StreamingMarshaller marshaller;
       private final Connection conn;
       private final Collection<Bucket> emptyBuckets;
+      private final BlockingQueue<Integer> purgedBucketIds;
 
       private BucketPurger(Collection<Bucket> buckets, PurgeListener purgeListener, StreamingMarshaller marshaller,
-                           Connection conn, Collection<Bucket> emptyBuckets) {
+                           Connection conn, Collection<Bucket> emptyBuckets, BlockingQueue<Integer> purgedBucketIds) {
          this.buckets = buckets;
          this.purgeListener = purgeListener;
          this.marshaller = marshaller;
          this.conn = conn;
          this.emptyBuckets = emptyBuckets;
+         this.purgedBucketIds = purgedBucketIds;
       }
 
       @Override
       public Void call() throws Exception {
+         log.trace("Purger task started");
          PreparedStatement ps = null;
+         List<Bucket> purgedBuckets = new ArrayList(buckets.size());
          try {
             String sql = tableManipulation.getUpdateRowSql();
             ps = conn.prepareStatement(sql);
-            for (Iterator<Bucket> it = buckets.iterator(); it.hasNext();) {
-               Bucket bucket = it.next();
+            for (Bucket bucket : buckets) {
+               log.trace("Purging bucket " + bucket.getBucketId() + " with entries " + bucket.getStoredEntries());
                for (Object key : bucket.removeExpiredEntries(ctx.getTimeService())) {
                   if (purgeListener != null) purgeListener.entryPurged(key);
                }
                if (!bucket.isEmpty()) {
-                  ByteBuffer byteBuffer = JdbcUtil.marshall(marshaller, bucket);
+                  ByteBuffer byteBuffer = JdbcUtil.marshall(marshaller, bucket.getStoredEntries());
                   ps.setBinaryStream(1, new ByteArrayInputStream(byteBuffer.getBuf(), byteBuffer.getOffset(), byteBuffer.getLength()), byteBuffer.getLength());
                   ps.setLong(2, bucket.timestampOfFirstEntryToExpire());
                   ps.setString(3, bucket.getBucketIdAsString());
                   ps.addBatch();
+                  purgedBuckets.add(bucket);
                } else {
-                  it.remove();
                   emptyBuckets.add(bucket);
                }
             }
+            log.trace("Executing batch");
             ps.executeBatch();
+            log.trace("Batch finished");
          } finally {
             JdbcUtil.safeClose(ps);
-            releaseLocks(buckets);
+            // empty buckets are removed later
+            for (Bucket b : purgedBuckets) {
+               purgedBucketIds.put(b.getBucketId());
+            }
          }
          return null;
       }

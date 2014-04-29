@@ -25,6 +25,8 @@ import org.testng.annotations.Test;
 import static org.infinispan.server.hotrod.test.HotRodTestingUtil.hotRodCacheConfiguration;
 import static org.infinispan.test.TestingUtil.internalMetadata;
 
+import java.util.Set;
+
 
 /**
  * @author Mircea.Markus@jboss.com
@@ -97,7 +99,7 @@ public class RemoteStoreRawValuesTest extends BaseStoreTest {
    }
 
    @Override
-   protected void purgeExpired() throws PersistenceException {
+   protected void purgeExpired(Set<String> expiredKeys, long timeout) throws PersistenceException {
       localCacheManager.getCache().getAdvancedCache().getEvictionManager().processEviction();
    }
 

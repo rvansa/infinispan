@@ -1,6 +1,10 @@
 package org.infinispan.persistence.jdbc.configuration;
 
 import static org.infinispan.test.TestingUtil.INFINISPAN_START_TAG;
+import static org.testng.AssertJUnit.assertEquals;
+import static org.testng.AssertJUnit.assertFalse;
+import static org.testng.AssertJUnit.assertTrue;
+
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -12,7 +16,6 @@ import org.infinispan.test.TestingUtil;
 import org.infinispan.test.fwk.TestCacheManagerFactory;
 import org.testng.annotations.AfterMethod;
 import org.testng.annotations.Test;
-import static org.testng.AssertJUnit.*;
 
 @Test(groups = "unit", testName = "persistence.jdbc.configuration.XmlFileParsingTest")
 public class XmlFileParsingTest extends AbstractInfinispanTest {
@@ -49,6 +52,8 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals("BINARY", store.table().dataColumnType());
       assertEquals("version", store.table().timestampColumnName());
       assertTrue(store.async().enabled());
+      assertTrue(store.shared());
+      assertFalse(store.purgeOnStartup());
       assertEquals("DummyKey2StringMapper", store.key2StringMapper());
       assertTrue(store.shared());
       assertTrue(store.preload());
@@ -76,6 +81,15 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
             "           <timestamp-column name=\"version\" type=\"BIGINT\" />\n" +
             "         </binary-keyed-table>\n" +
             "       </binary-keyed-jdbc-store>\n" +
+            "       <binaryKeyedJdbcStore xmlns=\"urn:infinispan:config:jdbc:6.0\" ignoreModifications=\"true\" purgeOnStartup=\"true\">\n" +
+            "         <simpleConnection connectionUrl=\"jdbc:h2:mem:infinispan;DB_CLOSE_DELAY=-1\" username=\"dbuser\" password=\"dbpass\" driverClass=\"org.h2.Driver\"/>\n" +
+            "         <binaryKeyedTable prefix=\"bucket\" fetchSize=\"34\" batchSize=\"128\">\n" +
+            "           <idColumn name=\"id\" type=\"BINARY\" />\n" +
+            "           <dataColumn name=\"datum\" type=\"BINARY\" />\n" +
+            "           <timestampColumn name=\"version\" type=\"BIGINT\" />\n" +
+            "         </binaryKeyedTable>\n" +
+            "         <singleton enabled=\"true\" />\n" +
+            "       </binaryKeyedJdbcStore>\n" +
             "     </persistence>\n" +
             "   </local-cache></cache-container>\n" +
             TestingUtil.INFINISPAN_END_TAG;
@@ -88,6 +102,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
       assertEquals("BINARY", store.table().dataColumnType());
       assertEquals("version", store.table().timestampColumnName());
       assertTrue(store.singletonStore().enabled());
+      assertTrue(store.purgeOnStartup());
       SimpleConnectionFactoryConfiguration connectionFactory = (SimpleConnectionFactoryConfiguration) store.connectionFactory();
       assertEquals("jdbc:h2:mem:infinispan;DB_CLOSE_DELAY=-1", connectionFactory.connectionUrl());
       assertEquals("org.h2.Driver", connectionFactory.driverClass());
@@ -134,6 +149,7 @@ public class XmlFileParsingTest extends AbstractInfinispanTest {
 
       assertTrue(store.async().enabled());
       assertTrue(store.singletonStore().enabled());
+      assertFalse(store.purgeOnStartup());
       assertEquals("DummyKey2StringMapper", store.key2StringMapper());
    }
 
