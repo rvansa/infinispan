@@ -1,5 +1,14 @@
 package org.infinispan.query.dsl.embedded;
 
+import static org.junit.Assert.*;
+
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashSet;
+import java.util.List;
+
 import org.hibernate.search.engine.spi.SearchFactoryImplementor;
 import org.infinispan.query.Search;
 import org.infinispan.query.dsl.FilterConditionEndContext;
@@ -12,15 +21,6 @@ import org.infinispan.query.dsl.embedded.sample_domain_model.Transaction;
 import org.infinispan.query.dsl.embedded.sample_domain_model.User;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-
-import java.util.Arrays;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Date;
-import java.util.HashSet;
-import java.util.List;
-
-import static org.junit.Assert.*;
 
 /**
  * Test for query conditions (filtering). Exercises the whole query DSL on the sample domain model.
@@ -539,6 +539,20 @@ public class QueryDslConditionsTest extends AbstractQueryDslTest {
 
       List<User> list = q.list();
       assertTrue(list.isEmpty());
+   }
+
+   public void testNot8() throws Exception {
+      QueryFactory qf = Search.getSearchManager(cache).getQueryFactory();
+
+      Query q = qf.from(User.class)
+            .not(
+                  qf.having("name").eq("John")
+                  .or(qf.having("surname").eq("Man")))
+            .toBuilder().build();
+
+      List<User> list = q.list();
+      assertEquals(1, list.size());
+      assertEquals("Woman", list.get(0).getSurname());
    }
 
    public void testEmptyQuery() throws Exception {
