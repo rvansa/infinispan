@@ -1,27 +1,24 @@
 package org.infinispan.commands;
 
+import static org.infinispan.xsite.XSiteAdminCommand.AdminOperation;
+import static org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand.StateTransferControl;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.Callable;
+import javax.transaction.xa.Xid;
+
 import org.infinispan.Cache;
-import org.infinispan.commands.read.EntryRetrievalCommand;
-import org.infinispan.container.entries.CacheEntry;
-import org.infinispan.commands.remote.GetKeysInGroupCommand;
-import org.infinispan.context.InvocationContextFactory;
-import org.infinispan.distribution.group.GroupManager;
-import org.infinispan.iteration.impl.EntryRequestCommand;
-import org.infinispan.iteration.impl.EntryResponseCommand;
-import org.infinispan.iteration.impl.EntryRetriever;
-import org.infinispan.metadata.Metadata;
 import org.infinispan.atomic.Delta;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.module.ModuleCommandInitializer;
-import org.infinispan.commands.read.DistributedExecuteCommand;
-import org.infinispan.commands.read.EntrySetCommand;
-import org.infinispan.commands.read.GetKeyValueCommand;
-import org.infinispan.commands.read.KeySetCommand;
-import org.infinispan.commands.read.MapCombineCommand;
-import org.infinispan.commands.read.ReduceCommand;
-import org.infinispan.commands.read.SizeCommand;
-import org.infinispan.commands.read.ValuesCommand;
+import org.infinispan.commands.read.*;
+import org.infinispan.commands.remote.ClusteredGetManyCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.remote.MultipleRpcCommand;
 import org.infinispan.commands.remote.SingleRpcCommand;
 import org.infinispan.commands.remote.recovery.CompleteTransactionCommand;
@@ -31,46 +28,44 @@ import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.tx.totalorder.TotalOrderCommitCommand;
-import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
+import org.infinispan.commands.tx.totalorder.TotalOrderCommitCommand;
+import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderRollbackCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.EvictCommand;
-import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commands.write.InvalidateL1Command;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commands.write.*;
 import org.infinispan.configuration.cache.Configuration;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.Flag;
+import org.infinispan.context.InvocationContextFactory;
 import org.infinispan.distexec.mapreduce.MapReduceManager;
 import org.infinispan.distexec.mapreduce.Mapper;
 import org.infinispan.distexec.mapreduce.Reducer;
 import org.infinispan.distribution.DistributionManager;
+import org.infinispan.distribution.group.GroupManager;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
-import org.infinispan.interceptors.InterceptorChain;
 import org.infinispan.filter.Converter;
 import org.infinispan.filter.KeyValueFilter;
+import org.infinispan.interceptors.InterceptorChain;
+import org.infinispan.iteration.impl.EntryRequestCommand;
+import org.infinispan.iteration.impl.EntryResponseCommand;
+import org.infinispan.iteration.impl.EntryRetriever;
+import org.infinispan.metadata.Metadata;
+import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.partionhandling.impl.PartitionHandlingManager;
-import org.infinispan.statetransfer.StateProvider;
+import org.infinispan.remoting.transport.Address;
+import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.statetransfer.StateConsumer;
+import org.infinispan.statetransfer.StateProvider;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
-import org.infinispan.statetransfer.StateChunk;
-import org.infinispan.notifications.cachelistener.CacheNotifier;
-import org.infinispan.remoting.transport.Address;
 import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.transaction.impl.RemoteTransaction;
 import org.infinispan.transaction.impl.TransactionTable;
@@ -90,18 +85,6 @@ import org.infinispan.xsite.statetransfer.XSiteStateProvider;
 import org.infinispan.xsite.statetransfer.XSiteStatePushCommand;
 import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
 import org.infinispan.xsite.statetransfer.XSiteStateTransferManager;
-
-import javax.transaction.xa.Xid;
-
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.Callable;
-
-import static org.infinispan.xsite.XSiteAdminCommand.*;
-import static org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand.*;
 
 /**
  * @author Mircea.Markus@jboss.com
@@ -252,6 +235,11 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
+   public GetManyCommand buildGetManyCommand(Set<?> keys, Set<Flag> flags, boolean returnEntries) {
+      return new GetManyCommand(keys, flags, returnEntries, entryFactory);
+   }
+
+   @Override
    public PutMapCommand buildPutMapCommand(Map<?, ?> map, Metadata metadata, Set<Flag> flags) {
       return new PutMapCommand(map, notifier, metadata, flags);
    }
@@ -309,6 +297,11 @@ public class CommandsFactoryImpl implements CommandsFactory {
    public ClusteredGetCommand buildClusteredGetCommand(Object key, Set<Flag> flags, boolean acquireRemoteLock, GlobalTransaction gtx) {
       return new ClusteredGetCommand(key, cacheName, flags, acquireRemoteLock, gtx,
             configuration.dataContainer().keyEquivalence());
+   }
+
+   @Override
+   public ClusteredGetManyCommand buildClusteredGetManyCommand(Object[] keys, Set<Flag> flags, GlobalTransaction gtx) {
+      return new ClusteredGetManyCommand(cacheName, keys, flags, gtx, configuration.dataContainer().keyEquivalence());
    }
 
    /**
@@ -481,6 +474,11 @@ public class CommandsFactoryImpl implements CommandsFactory {
          case GetKeysInGroupCommand.COMMAND_ID:
             GetKeysInGroupCommand getKeysInGroupCommand = (GetKeysInGroupCommand) c;
             getKeysInGroupCommand.setGroupManager(groupManager);
+            break;
+         case ClusteredGetManyCommand.COMMAND_ID:
+            ClusteredGetManyCommand clusteredGetManyCommand = (ClusteredGetManyCommand) c;
+            clusteredGetManyCommand.init(icf, this, entryFactory, interceptorChain, txTable,
+                  configuration.dataContainer().keyEquivalence());
             break;
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());

@@ -1,5 +1,13 @@
 package org.infinispan.cache.impl;
 
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import javax.transaction.TransactionManager;
+import javax.transaction.xa.XAResource;
+
 import org.infinispan.AdvancedCache;
 import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
@@ -20,13 +28,6 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.security.AuthorizationManager;
 import org.infinispan.stats.Stats;
 import org.infinispan.util.concurrent.locks.LockManager;
-
-import javax.transaction.TransactionManager;
-import javax.transaction.xa.XAResource;
-
-import java.util.Collection;
-import java.util.EnumSet;
-import java.util.List;
 
 /**
  * Similar to {@link org.infinispan.cache.impl.AbstractDelegatingCache}, but for {@link AdvancedCache}.
@@ -196,6 +197,11 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
    @Override
    public CacheEntry<K, V> getCacheEntry(K key) {
       return cache.getCacheEntry(key);
+   }
+
+   @Override
+   public Map<K, CacheEntry<K, V>> getManyCacheEntries(Set<K> keys) {
+      return cache.getManyCacheEntries(keys);
    }
 
    @Override

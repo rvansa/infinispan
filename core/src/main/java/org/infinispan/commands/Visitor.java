@@ -4,6 +4,7 @@ import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntryRetrievalCommand;
 import org.infinispan.commands.read.EntrySetCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.KeySetCommand;
 import org.infinispan.commands.read.SizeCommand;
@@ -12,10 +13,17 @@ import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.*;
+import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EvictCommand;
+import org.infinispan.commands.write.InvalidateCommand;
+import org.infinispan.commands.write.InvalidateL1Command;
+import org.infinispan.commands.write.PutKeyValueCommand;
+import org.infinispan.commands.write.PutMapCommand;
+import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
-import org.infinispan.iteration.EntryIterable;
 
 /**
  * @author Mircea.Markus@jboss.com
@@ -45,6 +53,8 @@ public interface Visitor {
    Object visitSizeCommand(InvocationContext ctx, SizeCommand command) throws Throwable;
 
    Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable;
+
+   Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable;
 
    Object visitKeySetCommand(InvocationContext ctx, KeySetCommand command) throws Throwable;
 

@@ -1,8 +1,12 @@
 package org.infinispan.interceptors;
 
 
+import java.util.Map;
+
+import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
@@ -71,16 +75,29 @@ public class CallInterceptor extends CommandInterceptor {
       Object ret = command.perform(ctx);
       if (ret != null) {
          if (command.isReturnEntry())
-            notifyCacheEntryVisit(ctx, command, ((CacheEntry) ret).getValue());
+            notifyCacheEntryVisit(ctx, command.getKey(), ((CacheEntry) ret).getValue(), command);
          else
-            notifyCacheEntryVisit(ctx, command, ret);
+            notifyCacheEntryVisit(ctx, command.getKey(), ret, command);
       }
 
       return ret;
    }
 
-   private void notifyCacheEntryVisit(InvocationContext ctx, GetKeyValueCommand command, Object value) {
-      Object key = command.getKey();
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      if (trace) log.trace("Executing command: " + command + ".");
+      Object ret = command.perform(ctx);
+      if (ret != null) {
+         Map<Object, Object> map = (Map<Object, Object>) ret;
+         for (Map.Entry<Object, Object> entry : ((Map<Object, Object>) ret).entrySet()) {
+            Object value = command.isReturnEntries() ? ((CacheEntry) entry.getValue()).getValue() : entry.getValue();
+            notifyCacheEntryVisit(ctx, entry.getKey(), value, command);
+         }
+      }
+      return ret;
+   }
+
+   private void notifyCacheEntryVisit(InvocationContext ctx, Object key, Object value, FlagAffectedCommand command) {
       notifier.notifyCacheEntryVisited(key, value, true, ctx, command);
       notifier.notifyCacheEntryVisited(key, value, false, ctx, command);
    }

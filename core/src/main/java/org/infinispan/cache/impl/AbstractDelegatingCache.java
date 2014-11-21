@@ -1,22 +1,19 @@
 package org.infinispan.cache.impl;
 
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeUnit;
+
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
 import org.infinispan.commons.util.CloseableIteratorCollection;
 import org.infinispan.commons.util.CloseableIteratorSet;
+import org.infinispan.commons.util.concurrent.NotifyingFuture;
+import org.infinispan.filter.KeyFilter;
 import org.infinispan.lifecycle.ComponentStatus;
 import org.infinispan.manager.EmbeddedCacheManager;
-import org.infinispan.filter.Converter;
-import org.infinispan.filter.KeyFilter;
-import org.infinispan.filter.KeyValueFilter;
-import org.infinispan.commons.util.concurrent.NotifyingFuture;
 import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
-
-import java.util.Collection;
-import java.util.Map;
-import java.util.Set;
-import java.util.concurrent.TimeUnit;
 
 /**
  * This is a convenient base class for implementing a cache delegate. The only constructor takes a {@link Cache}
@@ -107,6 +104,11 @@ public abstract class AbstractDelegatingCache<K, V> implements Cache<K, V> {
    @Override
    public void putAll(Map<? extends K, ? extends V> map, long lifespan, TimeUnit unit) {
       cache.putAll(map, lifespan, unit);
+   }
+
+   @Override
+   public Map<K, V> getMany(Set<K> keys) {
+      return cache.getMany(keys);
    }
 
    @Override

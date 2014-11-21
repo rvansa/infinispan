@@ -1,6 +1,14 @@
 package org.infinispan.interceptors.distribution;
 
+import static org.infinispan.commons.util.Util.toStr;
+
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -8,15 +16,15 @@ import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
+import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.*;
 
 /**
  * Non-transactional interceptor used by distributed caches that support concurrent writes.
@@ -57,6 +65,53 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       } catch (SuspectException e) {
          // retry
          return visitGetKeyValueCommand(ctx, command);
+      }
+   }
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      Map<Object, Object> map;
+      try {
+         Object returnValue = invokeNextInterceptor(ctx, command);
+         if (command.hasFlag(Flag.CACHE_MODE_LOCAL)
+               || command.hasFlag(Flag.SKIP_REMOTE_LOOKUP)
+               || command.hasFlag(Flag.IGNORE_RETURN_VALUES)
+               || !ctx.isOriginLocal()) {
+            return returnValue;
+         }
+         map = returnValue == null ? command.createMap() : (Map<Object, Object>) returnValue;
+         ConsistentHash ch = stateTransferManager.getCacheTopology().getReadConsistentHash();
+
+         // TODO: moving the data from one collection to another too often
+         // TODO: we are using Set in order to promote uniqueness of keys, though, List would be less complicated
+         Set<Object> requestedKeys = new HashSet<>();
+         for (Object key : command.getKeys()) {
+            CacheEntry entry = ctx.lookupEntry(key);
+            if (entry == null || entry.isNull()) {
+               if (!isValueAvailableLocally(ch, key)) {
+                  // TODO: custom policy for primary owners only/staggered gets
+                  requestedKeys.add(key);
+               } else {
+                  if (trace) {
+                     log.tracef("Not doing a remote get for key %s since entry is mapped to current node (%s) or is in L1. Owners are %s", toStr(key), rpcManager.getAddress(), ch.locateOwners(key));
+                  }
+                  InternalCacheEntry localEntry = localGetCacheEntry(ctx, key, false, command);
+                  // TODO: shouldn't we copy the entry as GetManyCommand.perform does?
+                  map.put(key, command.isReturnEntries() ? localEntry : localEntry.getValue());
+               }
+            }
+         }
+         if (!requestedKeys.isEmpty()) {
+            Map<Object, InternalCacheEntry> remotelyRetrieved = retrieveFromRemoteSources(requestedKeys, ctx, command.getFlags());
+            command.setRemotelyFetched(remotelyRetrieved);
+            for (InternalCacheEntry entry : remotelyRetrieved.values()) {
+               map.put(entry.getKey(), command.isReturnEntries() ? entry : entry.getValue());
+            }
+         }
+         return map;
+      } catch (SuspectException e) {
+         // retrieveFromRemoteSources should swallow SuspectExceptions
+         throw new IllegalStateException("Unexpected SuspectException", e);
       }
    }
 
@@ -154,10 +209,7 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       if (trace) log.tracef("Doing a remote get for key %s", key);
       InternalCacheEntry ice = retrieveFromRemoteSource(key, ctx, false, command, false);
       command.setRemotelyFetchedValue(ice);
-      if (ice != null)
-         return ice;
-
-      return null;
+      return ice;
    }
 
    protected boolean needValuesFromPreviousOwners(InvocationContext ctx, WriteCommand command) {
