@@ -1,11 +1,14 @@
 package org.infinispan.interceptors.locking;
 
+import java.util.Set;
+
 import org.infinispan.InvalidCacheUsageException;
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
@@ -24,8 +27,6 @@ import org.infinispan.factories.annotations.Start;
 import org.infinispan.util.concurrent.IsolationLevel;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Set;
 
 /**
  * Locking interceptor to be used by optimistic transactional caches.
@@ -107,7 +108,18 @@ public class OptimisticLockingInterceptor extends AbstractTxLockingInterceptor {
       markKeyAsRead(ctx, command, true);
       return super.visitGetKeyValueCommand(ctx, command);
    }
-   
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      if (needToMarkReads && ctx.isInTxScope()) {
+         TxInvocationContext tctx = (TxInvocationContext) ctx;
+         for (Object key : command.getKeys()) {
+            tctx.getCacheTransaction().addReadKey(key);
+         }
+      }
+      return super.visitGetManyCommand(ctx, command);
+   }
+
    @Override
    public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
       try {

@@ -89,7 +89,7 @@ public class CallInterceptor extends CommandInterceptor {
       Object ret = command.perform(ctx);
       if (ret != null) {
          Map<Object, Object> map = (Map<Object, Object>) ret;
-         for (Map.Entry<Object, Object> entry : ((Map<Object, Object>) ret).entrySet()) {
+         for (Map.Entry<Object, Object> entry : map.entrySet()) {
             Object value = command.isReturnEntries() ? ((CacheEntry) entry.getValue()).getValue() : entry.getValue();
             notifyCacheEntryVisit(ctx, entry.getKey(), value, command);
          }

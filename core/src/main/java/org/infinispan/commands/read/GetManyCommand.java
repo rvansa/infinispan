@@ -130,7 +130,7 @@ public class GetManyCommand extends AbstractFlagAffectedCommand {
       return returnEntries;
    }
 
-   public Map<Object, Object> createMap() {
+   public <V> Map<Object, V> createMap() {
       // TODO: HashMap is not optimal for serialization
       return new HashMap<>();
    }
@@ -145,6 +145,9 @@ public class GetManyCommand extends AbstractFlagAffectedCommand {
       return keys;
    }
 
+   public void setKeys(Set<Object> keys) {
+      this.keys = keys;
+   }
    public Map<Object, InternalCacheEntry> getRemotelyFetched() {
       return remotelyFetched;
    }

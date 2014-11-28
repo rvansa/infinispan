@@ -1,13 +1,19 @@
 package org.infinispan.interceptors;
 
+import java.util.Map;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicLong;
+
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commons.util.concurrent.jdk8backported.LongAdder;
 import org.infinispan.container.DataContainer;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
@@ -23,11 +29,6 @@ import org.infinispan.jmx.annotations.Units;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Map;
-import java.util.concurrent.TimeUnit;
-import org.infinispan.commons.util.concurrent.jdk8backported.LongAdder;
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Captures cache management statistics
@@ -100,6 +101,35 @@ public class CacheMgmtInterceptor extends JmxStatsCommandInterceptor {
             } else {
                hitTimes.add(intervalMilliseconds);
                hits.increment();
+            }
+         }
+      }
+
+      return retval;
+   }
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      long start = 0;
+      boolean statisticsEnabled = getStatisticsEnabled(command);
+      if (statisticsEnabled)
+         start = timeService.time();
+
+      Object retval = invokeNextInterceptor(ctx, command);
+
+      if (statisticsEnabled) {
+         long intervalMilliseconds = timeService.timeDuration(start, TimeUnit.MILLISECONDS);
+         if (ctx.isOriginLocal()) {
+            int requests = command.getKeys().size();
+            int hitCount = ((Map<Object, Object>) retval).size();
+            int missCount = requests - hitCount;
+            if (hitCount > 0) {
+               hitTimes.add(hitCount);
+               hitTimes.add(intervalMilliseconds * hitCount / requests);
+            }
+            if (missCount > 0) {
+               misses.add(missCount);
+               missTimes.add(intervalMilliseconds * missCount / requests);
             }
          }
       }

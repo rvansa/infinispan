@@ -1,10 +1,15 @@
 package org.infinispan.interceptors.locking;
 
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.Set;
+
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.remote.recovery.TxCompletionNotificationCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
@@ -18,14 +23,10 @@ import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
-import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.statetransfer.StateTransferManager;
+import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Arrays;
-import java.util.HashSet;
-import java.util.Set;
 
 /**
  * Locking interceptor to be used by pessimistic caches.
@@ -68,6 +69,25 @@ public class PessimisticLockingInterceptor extends AbstractTxLockingInterceptor 
             acquireRemoteIfNeeded(ctx, command, cdl.localNodeIsPrimaryOwner(command.getKey()));
             long lockTimeout = getLockAcquisitionTimeout(command, false);
             lockKeyAndCheckOwnership(ctx, command.getKey(), lockTimeout, false);
+         }
+         return invokeNextInterceptor(ctx, command);
+      } catch (Throwable t) {
+         releaseLocksOnFailureBeforePrepare(ctx);
+         throw t;
+      } finally {
+         if (!ctx.isInTxScope()) lockManager.unlockAll(ctx);
+      }
+   }
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      try {
+         if (ctx.isInTxScope() && command.hasFlag(Flag.FORCE_WRITE_LOCK) && !hasSkipLocking(command)) {
+            // TODO: implement locking here
+            throw new UnsupportedOperationException("Force write lock for GetMany not implemented");
+            // acquireRemoteIfNeeded(ctx, command.getKeys(), command);
+            // long lockTimeout = getLockAcquisitionTimeout(command, false);
+            // lockKeyAndCheckOwnership(ctx, command.getKeys(), lockTimeout, false);
          }
          return invokeNextInterceptor(ctx, command);
       } catch (Throwable t) {

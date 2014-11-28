@@ -1,10 +1,19 @@
 package org.infinispan.interceptors.distribution;
 
-import org.infinispan.commands.write.ValueMatcher;
-import org.infinispan.container.entries.CacheEntry;
+import static org.infinispan.commons.util.Util.toStr;
+import static org.infinispan.util.DeltaCompositeKeyUtil.*;
+
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.TimeoutException;
+
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
@@ -13,13 +22,16 @@ import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.InfinispanCollections;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.LocalTxInvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.rpc.RpcOptions;
@@ -29,14 +41,6 @@ import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.TimeoutException;
-
-import static org.infinispan.util.DeltaCompositeKeyUtil.filterDeltaCompositeKey;
-import static org.infinispan.util.DeltaCompositeKeyUtil.filterDeltaCompositeKeys;
-import static org.infinispan.util.DeltaCompositeKeyUtil.getAffectedKeysFromContext;
 
 /**
  * Handles the distribution of the transactional caches.
@@ -123,7 +127,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
-      return visitGetCommand(ctx, command, false);
+      return visitGetCommand(ctx, command, command.isReturnEntry());
    }
 
    private Object visitGetCommand(InvocationContext ctx, GetKeyValueCommand command,
@@ -155,6 +159,58 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
          // retry
          return visitGetKeyValueCommand(ctx, command);
       }
+   }
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      Map<Object, Object> map = (Map<Object, Object>) invokeNextInterceptor(ctx, command);
+      if (map == null) map = command.createMap();
+      if (command.hasFlag(Flag.CACHE_MODE_LOCAL)
+            || command.hasFlag(Flag.SKIP_REMOTE_LOOKUP)
+            || command.hasFlag(Flag.IGNORE_RETURN_VALUES)) {
+         return map;
+      }
+
+      Set<Object> requestedKeys = new HashSet<>(command.getKeys().size());
+      for (Object key : command.getKeys()) {
+         //if the cache entry has the value lock flag set, skip the remote get.
+         CacheEntry entry = ctx.lookupEntry(key);
+         boolean skipRemoteGet = entry != null && entry.skipLookup();
+
+         // need to check in the context as well since a null retval is not necessarily an indication of the entry not being
+         // available.  It could just have been removed in the same tx beforehand.  Also don't bother with a remote get if
+         // the entry is mapped to the local node.
+         if (!skipRemoteGet && !map.containsKey(key) && ctx.isOriginLocal()) {
+            // TODO: what about the deltaCompositeKey? It's kind of messy, where should we use the composite key
+            //       and where the regular one?
+            //key = filterDeltaCompositeKey(key);
+            boolean shouldFetchFromRemote = false;
+            if (entry == null || entry.isNull()) {
+               ConsistentHash ch = stateTransferManager.getCacheTopology().getReadConsistentHash();
+               shouldFetchFromRemote = !isValueAvailableLocally(ch, key);
+               if (!shouldFetchFromRemote && getLog().isTraceEnabled()) {
+                  getLog().tracef("Not doing a remote get for key %s since entry is mapped to current node (%s) or is in L1. Owners are %s", toStr(key), rpcManager.getAddress(), ch.locateOwners(key));
+               }
+            }
+            if (shouldFetchFromRemote) {
+               requestedKeys.add(key);
+            } else if (!ctx.isEntryRemovedInContext(key)) {
+               // TODO: I am not sure why should we try the local get again
+               Object localValue = localGet(ctx, key, false, command, command.isReturnEntries());
+               if (localValue != null) {
+                  map.put(key, localValue);
+               }
+            }
+         }
+      }
+      if (!requestedKeys.isEmpty()) {
+         Map<Object, InternalCacheEntry> remotelyRetrieved = retrieveFromRemoteSources(requestedKeys, ctx, command.getFlags());
+         command.setRemotelyFetched(remotelyRetrieved);
+         for (InternalCacheEntry entry : remotelyRetrieved.values()) {
+            map.put(entry.getKey(), command.isReturnEntries() ? entry : entry.getValue());
+         }
+      }
+      return map;
    }
 
    protected void lockAndWrap(InvocationContext ctx, Object key, InternalCacheEntry ice, FlagAffectedCommand command) throws InterruptedException {

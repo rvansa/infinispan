@@ -1,5 +1,27 @@
 package org.infinispan.util.logging;
 
+import static org.jboss.logging.Logger.Level.*;
+
+import java.io.File;
+import java.io.IOException;
+import java.lang.reflect.Method;
+import java.net.URL;
+import java.nio.channels.FileChannel;
+import java.security.Permission;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.CountDownLatch;
+import javax.management.InstanceAlreadyExistsException;
+import javax.management.MBeanRegistrationException;
+import javax.management.ObjectName;
+import javax.naming.NamingException;
+import javax.transaction.Synchronization;
+import javax.transaction.TransactionManager;
+import javax.transaction.xa.XAException;
+import javax.xml.namespace.QName;
+
 import org.infinispan.IllegalLifecycleStateException;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.tx.PrepareCommand;
@@ -29,29 +51,6 @@ import org.jboss.logging.annotations.LogMessage;
 import org.jboss.logging.annotations.Message;
 import org.jboss.logging.annotations.MessageLogger;
 import org.jgroups.View;
-
-import javax.management.InstanceAlreadyExistsException;
-import javax.management.MBeanRegistrationException;
-import javax.management.ObjectName;
-import javax.naming.NamingException;
-import javax.transaction.Synchronization;
-import javax.transaction.TransactionManager;
-import javax.transaction.xa.XAException;
-import javax.xml.namespace.QName;
-
-import java.io.File;
-import java.io.IOException;
-import java.lang.reflect.Method;
-import java.net.URL;
-import java.nio.channels.FileChannel;
-import java.security.Permission;
-import java.util.Collection;
-import java.util.List;
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-
-import static org.jboss.logging.Logger.Level.*;
 
 /**
  * Infinispan's log abstraction layer on top of JBoss Logging.
@@ -1214,4 +1213,8 @@ public interface Log extends BasicLogger {
    @LogMessage(level = INFO)
    @Message(value = "Finished local rebalance for cache %s on node %s, topology id = %d", id = 328)
    void rebalanceCompleted(String cacheName, Address node, int topologyId);
+
+   @Message(value = "Keys '%s' are not available. Not all owners are in this partition", id = 329)
+   AvailabilityException degradedModeKeysUnavailable(Collection<Object> keys);
+
 }

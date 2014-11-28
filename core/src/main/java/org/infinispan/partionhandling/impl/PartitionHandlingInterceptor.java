@@ -1,8 +1,14 @@
 package org.infinispan.partionhandling.impl;
 
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+
 import org.infinispan.commands.LocalFlagAffectedCommand;
 import org.infinispan.commands.read.EntryRetrievalCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -18,8 +24,6 @@ import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.partionhandling.AvailabilityMode;
 import org.infinispan.remoting.RpcException;
 import org.infinispan.remoting.transport.Transport;
-
-import java.util.Set;
 
 public class PartitionHandlingInterceptor extends CommandInterceptor {
 
@@ -130,6 +134,52 @@ public class PartitionHandlingInterceptor extends CommandInterceptor {
             // TODO Move this to the availability strategy when implementing ISPN-4624
             if (!InfinispanCollections.containsAny(transport.getMembers(), cdl.getOwners(key))) {
                throw getLog().degradedModeKeyUnavailable(key);
+            }
+         }
+      }
+
+      // TODO We can still return a stale value if the other partition stayed active without us and we haven't entered degraded mode yet.
+      return result;
+   }
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      Map<Object, Object> result;
+      try {
+         result = (Map<Object, Object>) super.visitGetManyCommand(ctx, command);
+      } catch (RpcException e) {
+         if (performPartitionCheck(ctx, command)) {
+            // We must have received an AvailabilityException from one of the owners.
+            // There is no way to verify the cause here, but there isn't any other way to get an invalid get response.
+            throw getLog().degradedModeKeysUnavailable(command.getKeys());
+         } else {
+            throw e;
+         }
+      }
+
+      if (performPartitionCheck(ctx, command)) {
+         // We do the availability check after the read, because the cache may have entered degraded mode
+         // while we were reading from a remote node.
+         for (Object key : command.getKeys()) {
+            partitionHandlingManager.checkRead(key);
+         }
+
+         // If all owners left and we still haven't received the availability update yet, we could return
+         // an incorrect value. So we need a special check for missing results.
+         if (result.size() != command.getKeys().size()) {
+            // Unlike in PartitionHandlingManager.checkRead(), here we ignore the availability status
+            // and we only fail the operation if _all_ owners have left the cluster.
+            // TODO Move this to the availability strategy when implementing ISPN-4624
+            Set<Object> missingKeys = new HashSet<>(command.getKeys());
+            missingKeys.removeAll(result.keySet());
+            for (Iterator<Object> it = missingKeys.iterator(); it.hasNext();) {
+               Object key = it.next();
+               if (InfinispanCollections.containsAny(transport.getMembers(), cdl.getOwners(key))) {
+                  it.remove();
+               }
+            }
+            if (!missingKeys.isEmpty()) {
+               throw getLog().degradedModeKeysUnavailable(missingKeys);
             }
          }
       }

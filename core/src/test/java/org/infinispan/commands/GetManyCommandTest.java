@@ -18,12 +18,45 @@ import org.testng.annotations.Test;
  * @author Radim Vansa &lt;rvansa@redhat.com&gt;
  */
 @Test(groups = "functional")
-public class GetManyCommandTest extends MultipleCacheManagersTest {
+public abstract class GetManyCommandTest extends MultipleCacheManagersTest {
 
-   private CacheMode cacheMode = CacheMode.DIST_SYNC;
-   private boolean transactional = false;
-   private int numNodes = 4;
-   private int numEntries = 100;
+   private final CacheMode cacheMode;
+   private final boolean transactional;
+   private final int numNodes = 4;
+   private final int numEntries = 100;
+
+   protected GetManyCommandTest(CacheMode cacheMode, boolean transactional) {
+      this.cacheMode = cacheMode;
+      this.transactional = transactional;
+   }
+
+   @Test(groups = "functional")
+   public static class DistNonTx extends GetManyCommandTest {
+      protected DistNonTx() {
+         super(CacheMode.DIST_SYNC, false);
+      }
+   }
+
+   @Test(groups = "functional")
+   public static class DistTx extends GetManyCommandTest {
+      protected DistTx() {
+         super(CacheMode.DIST_SYNC, true);
+      }
+   }
+
+   @Test(groups = "functional")
+   public static class ReplNonTx extends GetManyCommandTest {
+      protected ReplNonTx() {
+         super(CacheMode.REPL_SYNC, false);
+      }
+   }
+
+   @Test(groups = "functional")
+   public static class ReplTx extends GetManyCommandTest {
+      protected ReplTx() {
+         super(CacheMode.REPL_SYNC, true);
+      }
+   }
 
    @Override
    protected void createCacheManagers() throws Throwable {

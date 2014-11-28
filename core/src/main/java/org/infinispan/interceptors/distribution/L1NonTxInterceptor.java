@@ -1,10 +1,20 @@
 package org.infinispan.interceptors.distribution;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.DataCommand;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.LocalFlagAffectedCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetManyCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
@@ -26,15 +36,6 @@ import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 
 /**
  * Interceptor that handles L1 logic for non-transactional caches.
@@ -106,6 +107,23 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
       return performCommandWithL1WriteIfAble(ctx, command, false, true);
+   }
+
+   @Override
+   public Object visitGetManyCommand(InvocationContext ctx, GetManyCommand command) throws Throwable {
+      Object returnValue;
+      if (ctx.isOriginLocal()) {
+         // TODO: do we *have to* do the lookup using L1 synchronizers?
+         returnValue = invokeNextInterceptor(ctx, command);
+      } else {
+         // If this is a remote command, and we found a value in our cache
+         // we store it so that we can later invalidate it
+         for (Object key : command.getKeys()) {
+            l1Manager.addRequestor(key, ctx.getOrigin());
+         }
+         returnValue = invokeNextInterceptor(ctx, command);
+      }
+      return returnValue;
    }
 
    protected Object performCommandWithL1WriteIfAble(InvocationContext ctx, DataCommand command,
