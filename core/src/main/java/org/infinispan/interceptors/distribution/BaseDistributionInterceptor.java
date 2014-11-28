@@ -10,15 +10,15 @@ import java.util.Set;
 import java.util.concurrent.ExecutionException;
 
 import org.infinispan.commands.FlagAffectedCommand;
-import org.infinispan.commands.remote.ClusteredGetManyCommand;
+import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.remote.ClusteredGetCommand;
+import org.infinispan.commands.remote.ClusteredGetManyCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.concurrent.NotifyingFuture;
-import org.infinispan.commons.util.concurrent.NotifyingFutureImpl;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.container.entries.InternalCacheValue;
@@ -206,39 +206,24 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
          }
       }
 
-      List<KeysRequest> requests = new ArrayList<>(ownerKeys.size());
+      Map<Address, ReplicableCommand> commands = new HashMap<>();
       for (Map.Entry<Address, List<Object>> entry : ownerKeys.entrySet()) {
          Object[] keys = entry.getValue().toArray();
          ClusteredGetManyCommand getMany = cf.buildClusteredGetManyCommand(keys, flags, gtx);
-
-         Collection<Address> targets = Collections.singletonList(entry.getKey());
-         ResponseFilter filter = new ClusteredGetResponseValidityFilter(targets, rpcManager.getAddress());
-         RpcOptionsBuilder rpcOptionsBuilder = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, false);
-         RpcOptions options = rpcOptionsBuilder.responseFilter(filter).build();
-
-         // TODO: this is suboptimal as it consumes several threads from the async executor.
-         // Instead, the RpcManager/CommandAwareRpcDispatcher should expose a way how to send
-         // several different messages to different owners and use FutureCollator (listeners
-         // on the Request) to gather response
-         NotifyingFutureImpl<Map<Address, Response>> future = new NotifyingFutureImpl<>();
-         rpcManager.invokeRemotelyInFuture(future, targets, getMany, options);
-         requests.add(new KeysRequest(future, keys));
+         commands.put(entry.getKey(), getMany);
+         if (trace) {
+            log.tracef("Sending %s to %s", getMany, entry.getKey());
+         }
       }
 
+      RpcOptionsBuilder rpcOptionsBuilder = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, false);
+      RpcOptions options = rpcOptionsBuilder.build();
+      Map<Address, Response> responses = rpcManager.invokeRemotely(commands, options);
+
       Map<Object, InternalCacheEntry> entries = new HashMap<>();
-      for (KeysRequest request : requests) {
-         try {
-            Map<Address, Response> responses = request.future.get();
-            updateWithValues(request.keys, responses, entries);
-         } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            throw new CacheException("Waiting for keys " + requestedKeys + " interrupted", e);
-         } catch (ExecutionException e) {
-            log.tracef("Failed to request keys", e);
-            // ignore suspect exceptions, we'll try again anyway if we miss some keys
-            if (!(e.getCause() instanceof SuspectException)) {
-               throw e.getCause();
-            }
+      if (responses != null) {
+         for (Map.Entry<Address, Response> entry : responses.entrySet()) {
+            updateWithValues(((ClusteredGetManyCommand) commands.get(entry.getKey())).getKeys(), entry.getValue(), entries);
          }
       }
 
@@ -256,9 +241,9 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       }
       Object[] keys = requestedKeys.toArray();
       ClusteredGetManyCommand getMany = cf.buildClusteredGetManyCommand(keys, flags, gtx);
-      RpcOptionsBuilder rpcOptionsBuilder = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, false);
+//      RpcOptionsBuilder rpcOptionsBuilder = rpcManager.getRpcOptionsBuilder(ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS, false);
 
-      Map<Address, Response> responses = rpcManager.invokeRemotely(null, getMany, rpcOptionsBuilder.build());
+      responses = rpcManager.invokeRemotely(null, getMany, options /*rpcOptionsBuilder.build()*/);
       updateWithValues(keys, responses, entries);
 
       if (entries.size() != originallyRequestedKeys) {
@@ -271,17 +256,21 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
    private void updateWithValues(Object[] keys, Map<Address, Response> responses, Map<Object, InternalCacheEntry> entries)
          throws InterruptedException, ExecutionException {
       for (Response r : responses.values()) {
-         if (r instanceof SuccessfulResponse) {
-            SuccessfulResponse response = (SuccessfulResponse) r;
-            InternalCacheValue[] values = (InternalCacheValue[]) response.getResponseValue();
-            for (int i = 0; i < keys.length; ++i) {
-               if (values[i] != null) {
-                  InternalCacheEntry ice = values[i].toInternalCacheEntry(keys[i]);
-                  if (rvrl != null) {
-                     rvrl.remoteValueFound(ice);
-                  }
-                  entries.put(keys[i], ice);
+         updateWithValues(keys, r, entries);
+      }
+   }
+
+   private void updateWithValues(Object[] keys, Response r, Map<Object, InternalCacheEntry> entries) {
+      if (r instanceof SuccessfulResponse) {
+         SuccessfulResponse response = (SuccessfulResponse) r;
+         InternalCacheValue[] values = (InternalCacheValue[]) response.getResponseValue();
+         for (int i = 0; i < keys.length; ++i) {
+            if (values[i] != null) {
+               InternalCacheEntry ice = values[i].toInternalCacheEntry(keys[i]);
+               if (rvrl != null) {
+                  rvrl.remoteValueFound(ice);
                }
+               entries.put(keys[i], ice);
             }
          }
       }

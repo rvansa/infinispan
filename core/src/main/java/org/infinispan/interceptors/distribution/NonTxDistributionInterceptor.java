@@ -102,6 +102,9 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
             }
          }
          if (!requestedKeys.isEmpty()) {
+            if (trace) {
+               log.tracef("Fetching entries for keys %s from remote nodes", requestedKeys);
+            }
             Map<Object, InternalCacheEntry> remotelyRetrieved = retrieveFromRemoteSources(requestedKeys, ctx, command.getFlags());
             command.setRemotelyFetched(remotelyRetrieved);
             for (InternalCacheEntry entry : remotelyRetrieved.values()) {

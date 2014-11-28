@@ -101,6 +101,10 @@ public class ClusteredGetManyCommand extends LocalFlagAffectedRpcCommand {
       }
    }
 
+   public Object[] getKeys() {
+      return keys;
+   }
+
    @Override
    public byte getCommandId() {
       return COMMAND_ID;

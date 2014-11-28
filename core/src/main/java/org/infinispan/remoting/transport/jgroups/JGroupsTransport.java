@@ -1,8 +1,6 @@
 package org.infinispan.remoting.transport.jgroups;
 
-import static org.infinispan.factories.KnownComponentNames.ASYNC_TRANSPORT_EXECUTOR;
-import static org.infinispan.factories.KnownComponentNames.GLOBAL_MARSHALLER;
-import static org.infinispan.factories.KnownComponentNames.REMOTE_COMMAND_EXECUTOR;
+import static org.infinispan.factories.KnownComponentNames.*;
 
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -12,13 +10,11 @@ import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Future;
-
 import javax.management.MBeanServer;
 import javax.management.ObjectName;
 
@@ -38,7 +34,6 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.jmx.JmxUtil;
 import org.infinispan.notifications.cachemanagerlistener.CacheManagerNotifier;
-import org.infinispan.partionhandling.impl.PartitionHandlingManager;
 import org.infinispan.remoting.InboundInvocationHandler;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.rpc.ResponseFilter;
@@ -568,6 +563,52 @@ public class JGroupsTransport extends AbstractTransport implements MembershipLis
          responses = retval;
       }
       return responses;
+   }
+
+   @Override
+   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder, boolean anycast) throws Exception {
+      if (rpcCommands == null || rpcCommands.isEmpty()) {
+         // don't send if recipients list is empty
+         log.trace("Destination list is empty: no need to send message");
+         return InfinispanCollections.emptyMap();
+      }
+
+      if (trace)
+         log.tracef("commands=%s, mode=%s, timeout=%s", rpcCommands, mode, timeout);
+      Address self = getAddress();
+      boolean ignoreLeavers = mode == ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS || mode == ResponseMode.WAIT_FOR_VALID_RESPONSE;
+      List<Address> members = getMembers();
+
+      Map<org.jgroups.Address, ReplicableCommand> forJGroups = new HashMap<>();
+      for (Map.Entry<Address, ReplicableCommand> entry : rpcCommands.entrySet()) {
+         if (!members.contains(entry.getKey())) {
+            if (mode.isSynchronous() && ignoreLeavers) {
+               throw new SuspectException("One or more nodes have left the cluster while replicating commands " + rpcCommands);
+            }
+         } else {
+            forJGroups.put(toJGroupsAddress(entry.getKey()), entry.getValue());
+         }
+      }
+      boolean asyncMarshalling = mode == ResponseMode.ASYNCHRONOUS;
+      if (!usePriorityQueue && (ResponseMode.SYNCHRONOUS == mode || ResponseMode.SYNCHRONOUS_IGNORE_LEAVERS == mode))
+         usePriorityQueue = true;
+
+      RspList<Object> rsps = dispatcher.invokeRemoteCommands(forJGroups, toJGroupsMode(mode), timeout,
+               usePriorityQueue, asyncMarshalling, ignoreLeavers);
+
+      if (mode.isAsynchronous() || rsps == null)
+         return InfinispanCollections.emptyMap();// async case
+
+      Map<Address, Response> retval = new HashMap<Address, Response>(rsps.size());
+      boolean noValidResponses = true;
+      for (Rsp<Object> rsp : rsps.values()) {
+         noValidResponses &= parseResponseAndAddToResponseList(rsp.getValue(), rsp.getException(), retval, rsp.wasSuspected(), rsp.wasReceived(), fromJGroupsAddress(rsp.getSender()),
+               responseFilter != null, ignoreLeavers);
+      }
+
+      if (noValidResponses)
+         throw new TimeoutException("Timed out waiting for valid responses!");
+      return retval;
    }
 
    @Override
