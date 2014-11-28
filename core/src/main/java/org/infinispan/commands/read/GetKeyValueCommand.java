@@ -27,8 +27,6 @@ import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
 
 import java.util.Set;
 
@@ -41,8 +39,6 @@ import java.util.Set;
  */
 public class GetKeyValueCommand extends AbstractDataCommand {
    public static final byte COMMAND_ID = 4;
-   private static final Log log = LogFactory.getLog(GetKeyValueCommand.class);
-   private static final boolean trace = log.isTraceEnabled();
    private InternalCacheEntry remotelyFetchedValue;
 
    public GetKeyValueCommand(Object key, Set<Flag> flags) {
@@ -62,21 +58,12 @@ public class GetKeyValueCommand extends AbstractDataCommand {
    public Object perform(InvocationContext ctx) throws Throwable {
       CacheEntry entry = ctx.lookupEntry(key);
       if (entry == null || entry.isNull()) {
-         if (trace) {
-            log.trace("Entry not found");
-         }
          return null;
       }
       if (entry.isRemoved()) {
-         if (trace) {
-            log.tracef("Entry has been deleted and is of type %s", entry.getClass().getSimpleName());
-         }
          return null;
       }
       final Object value = entry.getValue();
-      if (trace) {
-         log.tracef("Found value %s", value);
-      }
       return value;
    }
 
