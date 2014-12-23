@@ -2,6 +2,7 @@ package org.infinispan.objects;
 
 import org.infinispan.Cache;
 import org.infinispan.commons.logging.LogFactory;
+import org.infinispan.objects.impl.AppendOnlyListImpl;
 import org.infinispan.objects.impl.SharedLongConditionalImpl;
 import org.infinispan.objects.impl.SharedLongDeltaImpl;
 
@@ -55,5 +56,17 @@ public class Lookup {
          default:
             throw new IllegalStateException();
       }
+   }
+
+   public static <T, K> SharedAppendOnlyList<T> createAppendOnlyList(Cache<K, ?> cache, K key, int maxFragmentSize) {
+      return new AppendOnlyListImpl<>(cache, key, maxFragmentSize, false);
+   }
+
+   public static <T, K> SharedAppendOnlyList<T> lookupAppendOnlyList(Cache<K, ?> cache, K key) {
+      return new AppendOnlyListImpl<>(cache, key);
+   }
+
+   public static <T, K> SharedAppendOnlyList<T> lookupOrCreateAppendOnlyList(Cache<K, ?> cache, K key, int maxFragmentSize) {
+      return new AppendOnlyListImpl<>(cache, key, maxFragmentSize, true);
    }
 }
