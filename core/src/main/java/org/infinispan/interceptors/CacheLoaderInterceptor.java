@@ -1,12 +1,16 @@
 package org.infinispan.interceptors;
 
+import static org.infinispan.persistence.PersistenceUtil.convert;
+
+import java.util.Collection;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.atomic.AtomicReference;
+
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.LocalFlagAffectedCommand;
-import org.infinispan.commands.read.EntrySetCommand;
+import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
-import org.infinispan.commands.read.KeySetCommand;
-import org.infinispan.commands.read.ValuesCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.InvalidateCommand;
@@ -43,18 +47,8 @@ import org.infinispan.persistence.PersistenceUtil;
 import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.persistence.spi.AdvancedCacheLoader;
 import org.infinispan.util.TimeService;
-import org.infinispan.util.concurrent.ConcurrentHashSet;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Collection;
-import java.util.Collections;
-import java.util.Set;
-import java.util.concurrent.ConcurrentLinkedQueue;
-import java.util.concurrent.atomic.AtomicLong;
-import java.util.concurrent.atomic.AtomicReference;
-
-import static org.infinispan.persistence.PersistenceUtil.convert;
 
 @MBean(objectName = "CacheLoader", description = "Component that handles loading entries from a CacheStore into memory.")
 public class CacheLoaderInterceptor extends JmxStatsCommandInterceptor {
@@ -93,46 +87,22 @@ public class CacheLoaderInterceptor extends JmxStatsCommandInterceptor {
 
    @Override
    public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
-      if (enabled) {
-         Object key;
-         if ((key = command.getKey()) != null) {
-            loadIfNeeded(ctx, key, command);
-         }
-      }
-      return invokeNextInterceptor(ctx, command);
+      return visitDataCommand(ctx, command);
    }
 
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) throws Throwable {
-      if (enabled) {
-         Object key;
-         if ((key = command.getKey()) != null) {
-            loadIfNeeded(ctx, key, command);
-         }
-      }
-      return invokeNextInterceptor(ctx, command);
+      return visitDataCommand(ctx, command);
    }
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
-      if (enabled) {
-         Object key;
-         if ((key = command.getKey()) != null) {
-            loadIfNeededAndUpdateStats(ctx, key, command);
-         }
-      }
-      return invokeNextInterceptor(ctx, command);
+      return visitDataCommand(ctx, command);
    }
 
    @Override
    public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
-      if (enabled) {
-         Object key;
-         if ((key = command.getKey()) != null) {
-            loadIfNeededAndUpdateStats(ctx, key, command);
-         }
-      }
-      return invokeNextInterceptor(ctx, command);
+      return visitDataCommand(ctx, command);
    }
 
    @Override
@@ -150,17 +120,15 @@ public class CacheLoaderInterceptor extends JmxStatsCommandInterceptor {
 
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
-      if (enabled) {
-         Object key;
-         if ((key = command.getKey()) != null) {
-            loadIfNeededAndUpdateStats(ctx, key, command);
-         }
-      }
-      return invokeNextInterceptor(ctx, command);
+      return visitDataCommand(ctx, command);
    }
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return visitDataCommand(ctx, command);
+   }
+
+   private Object visitDataCommand(InvocationContext ctx, AbstractDataCommand command) throws Throwable {
       if (enabled) {
          Object key;
          if ((key = command.getKey()) != null) {
