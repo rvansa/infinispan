@@ -1,5 +1,7 @@
 package org.infinispan.partitionhandling.impl;
 
+import java.util.Set;
+
 import org.infinispan.commands.LocalFlagAffectedCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.EntryRetrievalCommand;
@@ -8,6 +10,7 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -20,8 +23,6 @@ import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.remoting.RpcException;
 import org.infinispan.remoting.transport.Transport;
-
-import java.util.Set;
 
 public class PartitionHandlingInterceptor extends CommandInterceptor {
    PartitionHandlingManager partitionHandlingManager;
@@ -56,6 +57,11 @@ public class PartitionHandlingInterceptor extends CommandInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return handleSingleWrite(ctx, command);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return handleSingleWrite(ctx, command);
    }
 

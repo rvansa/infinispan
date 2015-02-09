@@ -1,7 +1,14 @@
 package org.infinispan.security;
 
+import java.util.Collections;
+import java.util.concurrent.TimeUnit;
+import javax.transaction.NotSupportedException;
+import javax.transaction.SystemException;
+
 import org.infinispan.atomic.Delta;
 import org.infinispan.atomic.DeltaAware;
+import org.infinispan.commands.EntryProcessor;
+import org.infinispan.commands.MutableEntry;
 import org.infinispan.container.versioning.EntryVersion;
 import org.infinispan.context.Flag;
 import org.infinispan.filter.KeyFilter;
@@ -15,11 +22,6 @@ import org.infinispan.notifications.cachelistener.filter.CacheEventConverter;
 import org.infinispan.notifications.cachelistener.filter.CacheEventFilter;
 import org.infinispan.notifications.cachelistener.filter.EventType;
 import org.infinispan.partitionhandling.AvailabilityMode;
-
-import javax.transaction.NotSupportedException;
-import javax.transaction.SystemException;
-import java.util.Collections;
-import java.util.concurrent.TimeUnit;
 
 public class SecureCacheTestDriver {
 
@@ -637,5 +639,15 @@ public class SecureCacheTestDriver {
    @TestCachePermission(AuthorizationPermission.BULK_WRITE)
    public void testRemoveGroup_String(SecureCache<String, String> cache) {
       cache.removeGroup("someGroup");
+   }
+
+   @TestCachePermission(AuthorizationPermission.WRITE)
+   public void testInvoke_Object_EntryProcessor(SecureCache<String, String> cache) {
+      cache.invoke("a", new EntryProcessor<String, String, Object>() {
+         @Override
+         public Object process(MutableEntry<String, String> entry, boolean retry) {
+            return null;
+         }
+      });
    }
 }

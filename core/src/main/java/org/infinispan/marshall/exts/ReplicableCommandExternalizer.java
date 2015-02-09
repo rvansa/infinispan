@@ -1,5 +1,11 @@
 package org.infinispan.marshall.exts;
 
+import java.io.IOException;
+import java.io.ObjectInput;
+import java.io.ObjectOutput;
+import java.util.Collection;
+import java.util.Set;
+
 import org.infinispan.atomic.DeltaAware;
 import org.infinispan.commands.RemoteCommandsFactory;
 import org.infinispan.commands.ReplicableCommand;
@@ -9,18 +15,12 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.write.*;
-import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.commons.io.UnsignedNumeric;
 import org.infinispan.commons.marshall.AbstractExternalizer;
 import org.infinispan.commons.util.Util;
+import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.marshall.core.Ids;
 import org.infinispan.topology.CacheTopologyControlCommand;
-
-import java.io.IOException;
-import java.io.ObjectInput;
-import java.io.ObjectOutput;
-import java.util.Collection;
-import java.util.Set;
 
 /**
  * ReplicableCommandExternalizer.
@@ -120,7 +120,7 @@ public class ReplicableCommandExternalizer extends AbstractExternalizer<Replicab
             InvalidateCommand.class, InvalidateL1Command.class,
             PutKeyValueCommand.class,
             PutMapCommand.class, RemoveCommand.class,
-            ReplaceCommand.class, GetKeysInGroupCommand.class);
+            ReplaceCommand.class, GetKeysInGroupCommand.class, EntryProcessCommand.class);
       // Search only those commands that replicable and not cache specific replicable commands
       Collection<Class<? extends ReplicableCommand>> moduleCommands = globalComponentRegistry.getModuleProperties().moduleOnlyReplicableCommands();
       if (moduleCommands != null && !moduleCommands.isEmpty()) coreCommands.addAll(moduleCommands);

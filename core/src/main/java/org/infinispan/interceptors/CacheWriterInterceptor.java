@@ -1,11 +1,31 @@
 package org.infinispan.interceptors;
 
+import static org.infinispan.factories.KnownComponentNames.CACHE_MARSHALLER;
+import static org.infinispan.persistence.PersistenceUtil.internalMetadata;
+import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
+import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.PRIVATE;
+
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
+import javax.transaction.InvalidTransactionException;
+import javax.transaction.SystemException;
+import javax.transaction.Transaction;
+import javax.transaction.TransactionManager;
+
 import org.infinispan.atomic.impl.AtomicHashMap;
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
-import org.infinispan.commands.write.*;
+import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
+import org.infinispan.commands.write.PutKeyValueCommand;
+import org.infinispan.commands.write.PutMapCommand;
+import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.marshall.StreamingMarshaller;
 import org.infinispan.configuration.cache.PersistenceConfiguration;
 import org.infinispan.container.InternalEntryFactory;
@@ -26,27 +46,13 @@ import org.infinispan.jmx.annotations.MBean;
 import org.infinispan.jmx.annotations.ManagedAttribute;
 import org.infinispan.jmx.annotations.ManagedOperation;
 import org.infinispan.jmx.annotations.MeasurementType;
-import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.marshall.core.MarshalledEntryImpl;
 import org.infinispan.metadata.EmbeddedMetadata;
 import org.infinispan.metadata.Metadata;
+import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import javax.transaction.InvalidTransactionException;
-import javax.transaction.SystemException;
-import javax.transaction.Transaction;
-import javax.transaction.TransactionManager;
-
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.atomic.AtomicLong;
-
-import static org.infinispan.factories.KnownComponentNames.CACHE_MARSHALLER;
-import static org.infinispan.persistence.PersistenceUtil.internalMetadata;
-import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.BOTH;
-import static org.infinispan.persistence.manager.PersistenceManager.AccessMode.PRIVATE;
 
 /**
  * Writes modifications back to the store on the way out: stores modifications back through the CacheLoader, either
@@ -169,6 +175,28 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
       Object key = command.getKey();
       storeEntry(ctx, key, command);
       if (getStatisticsEnabled()) cacheStores.incrementAndGet();
+
+      return returnValue;
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      Object returnValue = invokeNextInterceptor(ctx, command);
+      if (!isStoreEnabled(command) || ctx.isInTxScope() || !command.isSuccessful()) return returnValue;
+      if (!isProperWriter(ctx, command, command.getKey())) return returnValue;
+
+      Object key = command.getKey();
+      InternalCacheValue sv = getStoredValue(key, ctx);
+      storeEntry(ctx, key, command);
+      if (sv.getValue() != null) {
+         persistenceManager.writeToAllStores(new MarshalledEntryImpl(key, sv.getValue(), internalMetadata(sv), marshaller),
+               skipSharedStores(ctx, key, command) ? PRIVATE : BOTH);
+         if (getLog().isTraceEnabled()) getLog().tracef("Stored entry %s under key %s", sv, key);
+         if (getStatisticsEnabled()) cacheStores.incrementAndGet();
+      } else {
+         boolean resp = persistenceManager.deleteFromAllStores(key, skipSharedStores(ctx, key, command) ? PRIVATE: BOTH);
+         if (getLog().isTraceEnabled()) getLog().tracef("Removed entry under key %s and got response %s from CacheStore", key, resp);
+      }
 
       return returnValue;
    }

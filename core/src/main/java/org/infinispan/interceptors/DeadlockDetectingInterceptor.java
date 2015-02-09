@@ -3,6 +3,7 @@ package org.infinispan.interceptors;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.tx.PrepareCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
@@ -58,6 +59,11 @@ public class DeadlockDetectingInterceptor extends CommandInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return handleDataCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return handleDataCommand(ctx, command);
    }
 

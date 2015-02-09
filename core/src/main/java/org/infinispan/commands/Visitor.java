@@ -40,6 +40,8 @@ public interface Visitor {
    
    Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable;
 
+   Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable;
+
    // read commands
 
    Object visitSizeCommand(InvocationContext ctx, SizeCommand command) throws Throwable;

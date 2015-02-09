@@ -1,5 +1,7 @@
 package org.infinispan.commands;
 
+import java.util.Collection;
+
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.DistributedExecuteCommand;
 import org.infinispan.commands.read.EntryRetrievalCommand;
@@ -16,8 +18,6 @@ import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.*;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
-
-import java.util.Collection;
 
 /**
  * An abstract implementation of a Visitor that delegates all visit calls to a default handler which can be overridden.
@@ -62,6 +62,11 @@ public abstract class AbstractVisitor implements Visitor {
    
    @Override
    public Object visitApplyDeltaCommand(InvocationContext ctx, ApplyDeltaCommand command) throws Throwable {
+      return handleDefault(ctx, command);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return handleDefault(ctx, command);
    }
 

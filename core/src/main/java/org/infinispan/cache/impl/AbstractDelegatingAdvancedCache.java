@@ -1,8 +1,15 @@
 package org.infinispan.cache.impl;
 
+import java.util.Collection;
+import java.util.EnumSet;
+import java.util.List;
+import javax.transaction.TransactionManager;
+import javax.transaction.xa.XAResource;
+
 import org.infinispan.AdvancedCache;
 import org.infinispan.atomic.Delta;
 import org.infinispan.batch.BatchContainer;
+import org.infinispan.commands.EntryProcessor;
 import org.infinispan.commons.util.concurrent.NotifyingFuture;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.entries.CacheEntry;
@@ -20,13 +27,6 @@ import org.infinispan.remoting.rpc.RpcManager;
 import org.infinispan.security.AuthorizationManager;
 import org.infinispan.stats.Stats;
 import org.infinispan.util.concurrent.locks.LockManager;
-
-import javax.transaction.TransactionManager;
-import javax.transaction.xa.XAResource;
-
-import java.util.Collection;
-import java.util.EnumSet;
-import java.util.List;
 
 /**
  * Similar to {@link org.infinispan.cache.impl.AbstractDelegatingCache}, but for {@link AdvancedCache}.
@@ -249,6 +249,11 @@ public class AbstractDelegatingAdvancedCache<K, V> extends AbstractDelegatingCac
 
    protected final void putForExternalRead(K key, V value, Metadata metadata, EnumSet<Flag> flags, ClassLoader classLoader) {
       ((CacheImpl<K, V>) cache).putForExternalRead(key, value, metadata, flags, classLoader);
+   }
+
+   @Override
+   public <T> T invoke(K key, EntryProcessor<K, V, T> processor) {
+      return cache.invoke(key, processor);
    }
 
    public interface AdvancedCacheWrapper<K, V> {

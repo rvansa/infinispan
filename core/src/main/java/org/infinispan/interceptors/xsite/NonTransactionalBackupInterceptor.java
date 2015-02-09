@@ -3,6 +3,7 @@ package org.infinispan.interceptors.xsite;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -42,6 +43,11 @@ public class NonTransactionalBackupInterceptor extends BaseBackupInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return handleSingleKeyWriteCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return handleSingleKeyWriteCommand(ctx, command);
    }
 

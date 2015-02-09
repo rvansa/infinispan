@@ -1,7 +1,11 @@
 package org.infinispan.interceptors.distribution;
 
-import org.infinispan.commands.write.ValueMatcher;
-import org.infinispan.container.entries.CacheEntry;
+import static org.infinispan.util.DeltaCompositeKeyUtil.*;
+
+import java.util.Collection;
+import java.util.List;
+import java.util.concurrent.TimeoutException;
+
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
@@ -11,12 +15,15 @@ import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.InfinispanCollections;
+import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
@@ -32,14 +39,6 @@ import org.infinispan.transaction.LockingMode;
 import org.infinispan.transaction.impl.LocalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Collection;
-import java.util.List;
-import java.util.concurrent.TimeoutException;
-
-import static org.infinispan.util.DeltaCompositeKeyUtil.filterDeltaCompositeKey;
-import static org.infinispan.util.DeltaCompositeKeyUtil.filterDeltaCompositeKeys;
-import static org.infinispan.util.DeltaCompositeKeyUtil.getAffectedKeysFromContext;
 
 /**
  * Handles the distribution of the transactional caches.
@@ -87,6 +86,17 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
          if (ctx.isOriginLocal()) {
             // If the state transfer interceptor has to retry the command, it should ignore the previous value.
             command.setValueMatcher(command.isSuccessful() ? ValueMatcher.MATCH_ALWAYS : ValueMatcher.MATCH_NEVER);
+         }
+      }
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      try {
+         return handleTxWriteCommand(ctx, command, new SingleKeyRecipientGenerator(command.getKey()), false);
+      } finally {
+         if (ctx.isOriginLocal()) {
+            command.setRetry(true);
          }
       }
    }

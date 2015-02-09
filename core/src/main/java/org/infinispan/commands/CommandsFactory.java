@@ -54,6 +54,7 @@ import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
 import javax.transaction.xa.Xid;
 
 import java.util.Collection;
+import java.util.EnumSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -475,4 +476,15 @@ public interface CommandsFactory {
     */
    GetKeysInGroupCommand buildGetKeysInGroupCommand(Set<Flag> flags, String groupName);
 
+   /**
+    * Builds {@link org.infinispan.commands.write.EntryProcessCommand}
+    * @param key
+    * @param processor
+    * @param explicitFlags
+    * @param <K>
+    * @param <V>
+    * @param <T>
+    * @return
+    */
+   <K, V, T> EntryProcessCommand buildEntryProcessCommand(K key, EntryProcessor<K, V, T> processor, EnumSet<Flag> explicitFlags);
 }

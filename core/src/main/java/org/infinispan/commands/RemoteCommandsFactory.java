@@ -1,5 +1,7 @@
 package org.infinispan.commands;
 
+import java.util.Map;
+
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.module.ExtendedModuleCommandFactory;
 import org.infinispan.commands.module.ModuleCommandFactory;
@@ -27,20 +29,28 @@ import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareComman
 import org.infinispan.commands.tx.totalorder.TotalOrderRollbackCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
-import org.infinispan.commands.write.*;
+import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
+import org.infinispan.commands.write.InvalidateCommand;
+import org.infinispan.commands.write.InvalidateL1Command;
+import org.infinispan.commands.write.PutKeyValueCommand;
+import org.infinispan.commands.write.PutMapCommand;
+import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.factories.ComponentRegistry;
-import org.infinispan.iteration.impl.EntryRequestCommand;
-import org.infinispan.iteration.impl.EntryResponseCommand;
 import org.infinispan.factories.GlobalComponentRegistry;
 import org.infinispan.factories.KnownComponentNames;
 import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.scopes.Scope;
 import org.infinispan.factories.scopes.Scopes;
+import org.infinispan.iteration.impl.EntryRequestCommand;
+import org.infinispan.iteration.impl.EntryResponseCommand;
 import org.infinispan.jmx.CacheJmxRegistration;
-import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.manager.EmbeddedCacheManager;
+import org.infinispan.persistence.manager.PersistenceManager;
 import org.infinispan.statetransfer.StateRequestCommand;
 import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.topology.CacheTopologyControlCommand;
@@ -48,8 +58,6 @@ import org.infinispan.xsite.SingleXSiteRpcCommand;
 import org.infinispan.xsite.XSiteAdminCommand;
 import org.infinispan.xsite.statetransfer.XSiteStatePushCommand;
 import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
-
-import java.util.Map;
 
 /**
  * Specifically used to create un-initialized {@link org.infinispan.commands.ReplicableCommand}s from a byte stream.
@@ -130,6 +138,9 @@ public class RemoteCommandsFactory {
                break;
             case GetCacheEntryCommand.COMMAND_ID:
                command = new GetCacheEntryCommand();
+               break;
+            case EntryProcessCommand.COMMAND_ID:
+               command = new EntryProcessCommand();
                break;
             default:
                throw new CacheException("Unknown command id " + id + "!");

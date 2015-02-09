@@ -1,5 +1,6 @@
 package org.infinispan.interceptors;
 
+import java.util.concurrent.atomic.AtomicLong;
 import javax.transaction.Status;
 import javax.transaction.SystemException;
 import javax.transaction.Transaction;
@@ -21,6 +22,7 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -53,8 +55,6 @@ import org.infinispan.transaction.xa.recovery.RecoverableTransactionIdentifier;
 import org.infinispan.transaction.xa.recovery.RecoveryManager;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * Interceptor in charge with handling transaction related operations, e.g enlisting cache as an transaction
@@ -257,6 +257,11 @@ public class TxInterceptor extends CommandInterceptor implements JmxStatisticsEx
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return enlistWriteAndInvokeNext(ctx, command);
    }
 

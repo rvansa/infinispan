@@ -1,9 +1,12 @@
 package org.infinispan.interceptors.compat;
 
+import java.util.Set;
+
 import org.infinispan.commands.MetadataAwareCommand;
 import org.infinispan.commands.read.EntryRetrievalCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
@@ -20,8 +23,6 @@ import org.infinispan.filter.Converter;
 import org.infinispan.interceptors.base.CommandInterceptor;
 import org.infinispan.iteration.EntryIterable;
 import org.infinispan.metadata.Metadata;
-
-import java.util.Set;
 
 /**
  * Base implementation for an interceptor that applies type conversion to the data stored in the cache. Subclasses need
@@ -157,6 +158,17 @@ public abstract class BaseTypeConverterInterceptor extends CommandInterceptor {
          return ret;
 
       return ctx.isOriginLocal() ? converter.unboxValue(ret) : ret;
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      Object key = command.getKey();
+      TypeConverter<Object, Object, Object, Object> converter =
+            determineTypeConverter(command.getFlags());
+      if (ctx.isOriginLocal()) {
+         command.setKey(converter.boxKey(key));
+      }
+      return invokeNextInterceptor(ctx, command);
    }
 
    @Override

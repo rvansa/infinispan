@@ -1,5 +1,8 @@
 package org.infinispan.statetransfer;
 
+import java.util.Collections;
+import java.util.HashSet;
+
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.tx.CommitCommand;
@@ -8,9 +11,6 @@ import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.*;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
-
-import java.util.Collections;
-import java.util.HashSet;
 
 /**
  * // TODO: Document this
@@ -43,6 +43,11 @@ class AffectedKeysVisitor extends AbstractVisitor {
    @Override
    public Object visitPutKeyValueCommand(InvocationContext ctx, PutKeyValueCommand command) {
       return command.getAffectedKeys();
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      return Collections.singleton(command.getKey());
    }
 
    @Override

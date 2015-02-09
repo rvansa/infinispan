@@ -1,8 +1,15 @@
 package org.infinispan.interceptors.distribution;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
+
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -21,12 +28,6 @@ import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.transaction.TransactionMode;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.Collections;
-import java.util.HashSet;
-import java.util.Set;
-import java.util.concurrent.ExecutionException;
-import java.util.concurrent.Future;
 
 /**
  * L1 based interceptor that flushes the L1 cache at the end after a transaction/entry is committed to the data
@@ -72,6 +73,11 @@ public class L1LastChanceInterceptor extends BaseRpcInterceptor {
 
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
+      return visitDataWriteCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return visitDataWriteCommand(ctx, command, false);
    }
 

@@ -3,11 +3,15 @@ package org.infinispan.replication;
 import static org.infinispan.context.Flag.CACHE_MODE_LOCAL;
 import static org.testng.AssertJUnit.assertEquals;
 
+import java.io.Serializable;
 import java.util.HashMap;
 import java.util.Map;
 
 import org.infinispan.AdvancedCache;
+import org.infinispan.commands.EntryProcessor;
+import org.infinispan.commands.MutableEntry;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -20,17 +24,18 @@ import org.testng.annotations.Test;
 @Test(groups = "functional")
 public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
 
+   protected static final String REPL_CACHE_NAME = "replication";
    protected boolean isSync;
 
    protected void createCacheManagers() throws Throwable {
       ConfigurationBuilder build = getDefaultClusteredCacheConfig(isSync ? CacheMode.REPL_SYNC : CacheMode.REPL_ASYNC, true);
       build.clustering().stateTransfer().timeout(10000);
-      createClusteredCaches(2, "replication", build);
+      createClusteredCaches(2, REPL_CACHE_NAME, build);
    }
 
    public void put() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       // test a simple put!
       assert cache1.get("key") == null;
       assert cache2.get("key") == null;
@@ -59,8 +64,8 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
    }
 
    public void remove() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "value");
       assert cache2.get("key").equals("value");
       assert cache1.get("key") == null;
@@ -86,8 +91,8 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
    }
 
    public void testPutIfAbsent() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "valueOld");
       assert cache2.get("key").equals("valueOld");
       assert cache1.get("key") == null;
@@ -111,8 +116,8 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
    }
 
    public void testRemoveIfPresent() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache1.withFlags(CACHE_MODE_LOCAL).put("key", "value1");
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "value2");
       assert cache1.get("key").equals("value1");
@@ -131,9 +136,35 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
       assert cache2.get("key") == null;
    }
 
+   public void testEntryProcess() {
+      EntryProcessor<Object, Object, Integer> incrementor = new IncrementProcessor();
+      for (int i = 0; i < 10; ++i) {
+         AdvancedCache<Object, Object> firstCache = cache(i % 2, REPL_CACHE_NAME).getAdvancedCache();
+         AdvancedCache<Object, Object> otherCache = cache((i + 1) % 2, REPL_CACHE_NAME).getAdvancedCache();
+         expectRpc(otherCache, EntryProcessCommand.class);
+         int retval = firstCache.<Integer>invoke("key", incrementor);
+         waitForRpc(otherCache);
+         assertEquals(i, retval);
+         assertEquals(i + 1, firstCache.get("key"));
+         assertEquals(i + 1, otherCache.get("key"));
+      }
+   }
+
+   private static class IncrementProcessor implements EntryProcessor<Object, Object, Integer>, Serializable {
+      @Override
+      public Integer process(MutableEntry<Object, Object> entry, boolean retry) {
+         int actual;
+         if (entry.getValue() == null) actual = 0;
+         else if (entry.getValue() instanceof Integer) actual = (Integer) entry.getValue();
+         else throw new IllegalArgumentException(String.valueOf(entry.getValue()));
+         entry.setValue(actual + 1);
+         return actual;
+      }
+   }
+
    public void testClear() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache1.withFlags(CACHE_MODE_LOCAL).put("key", "value1");
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "value2");
       assert cache1.get("key").equals("value1");
@@ -148,8 +179,8 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
    }
 
    public void testReplace() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "value2");
       assert cache1.get("key") == null;
       assert cache2.get("key").equals("value2");
@@ -170,8 +201,8 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
    }
 
    public void testReplaceWithOldVal() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "value2");
       assert cache1.get("key") == null;
       assert cache2.get("key").equals("value2");
@@ -198,8 +229,8 @@ public abstract class BaseReplicatedAPITest extends MultipleCacheManagersTest {
    }
 
    public void testLocalOnlyClear() {
-      AdvancedCache cache1 = cache(0,"replication").getAdvancedCache();
-      AdvancedCache cache2 = cache(1,"replication").getAdvancedCache();
+      AdvancedCache cache1 = cache(0, REPL_CACHE_NAME).getAdvancedCache();
+      AdvancedCache cache2 = cache(1, REPL_CACHE_NAME).getAdvancedCache();
       cache1.withFlags(CACHE_MODE_LOCAL).put("key", "value1");
       cache2.withFlags(CACHE_MODE_LOCAL).put("key", "value2");
       assert cache1.get("key").equals("value1");

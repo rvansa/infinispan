@@ -14,6 +14,7 @@ import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -90,6 +91,11 @@ public class InvalidationInterceptor extends BaseRpcInterceptor implements JmxSt
 
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
+      return handleInvalidate(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return handleInvalidate(ctx, command, command.getKey());
    }
 

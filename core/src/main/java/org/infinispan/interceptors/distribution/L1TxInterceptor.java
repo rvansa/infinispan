@@ -1,8 +1,11 @@
 package org.infinispan.interceptors.distribution;
 
+import java.util.concurrent.Future;
+
 import org.infinispan.commands.LocalFlagAffectedCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -10,10 +13,6 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
-
-import java.util.concurrent.Future;
-
-import static org.infinispan.commons.util.Util.toStr;
 
 /**
  * Interceptor that handles L1 logic for transactional caches.
@@ -42,6 +41,11 @@ public class L1TxInterceptor extends L1NonTxInterceptor {
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
       return performCommandWithL1WriteIfAble(ctx, command, true, false);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      return performCommandWithL1WriteIfAble(ctx, command, true, true);
    }
 
    @Override

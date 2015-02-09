@@ -1,28 +1,42 @@
 package org.infinispan.xsite;
 
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ConcurrentMap;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
+import javax.transaction.TransactionManager;
+
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
-import org.infinispan.commands.CommandsFactory;
-import org.infinispan.commands.remote.CacheRpcCommand;
-import org.infinispan.commons.util.concurrent.NotifyingFutureImpl;
-import org.infinispan.commons.util.concurrent.NotifyingNotifiableFuture;
-import org.infinispan.interceptors.locking.ClusteringDependentLogic;
-import org.infinispan.metadata.Metadata;
 import org.infinispan.commands.AbstractVisitor;
+import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.remote.CacheRpcCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
+import org.infinispan.commons.util.concurrent.NotifyingFutureImpl;
+import org.infinispan.commons.util.concurrent.NotifyingNotifiableFuture;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 import org.infinispan.context.impl.TxInvocationContext;
+import org.infinispan.interceptors.locking.ClusteringDependentLogic;
+import org.infinispan.metadata.Metadata;
 import org.infinispan.remoting.LocalInvocation;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.CacheNotFoundResponse;
@@ -38,20 +52,6 @@ import org.infinispan.util.logging.LogFactory;
 import org.infinispan.xsite.statetransfer.XSiteState;
 import org.infinispan.xsite.statetransfer.XSiteStatePushCommand;
 import org.infinispan.xsite.statetransfer.XSiteStateTransferControlCommand;
-
-import javax.transaction.TransactionManager;
-
-import java.util.ArrayList;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.Future;
-import java.util.concurrent.TimeUnit;
 
 /**
  * @author Mircea Markus
@@ -247,6 +247,11 @@ public class BackupReceiverImpl implements BackupReceiver {
             return backupCache.remove(command.getKey(), command.getValue());
          }
          return backupCache.remove(command.getKey());
+      }
+
+      @Override
+      public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+         return backupCache.invoke(command.getKey(), command.getProcessor());
       }
 
       @Override

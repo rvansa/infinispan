@@ -8,6 +8,7 @@ import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -88,6 +89,11 @@ public abstract class AbstractLockingInterceptor extends CommandInterceptor {
    }
 
    @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      return visitDataWriteCommand(ctx, command);
+   }
+
+   @Override
    public final Object visitInvalidateCommand(InvocationContext ctx, InvalidateCommand command) throws Throwable {
       try {
          boolean skipLocking = hasSkipLocking(command);
@@ -159,4 +165,5 @@ public abstract class AbstractLockingInterceptor extends CommandInterceptor {
    protected final void lockKey(InvocationContext ctx, Object key, long timeoutMillis, boolean skipLocking) throws InterruptedException {
       lockManager.acquireLockNoCheck(ctx, key, timeoutMillis, skipLocking);
    }
+
 }

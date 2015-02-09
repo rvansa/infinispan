@@ -1,10 +1,20 @@
 package org.infinispan.stats.wrappers;
 
+import static java.util.concurrent.TimeUnit.NANOSECONDS;
+import static org.infinispan.stats.container.ExtendedStatistic.*;
+import static org.infinispan.stats.percentiles.PercentileStatistic.*;
+
+import java.io.File;
+import java.io.IOException;
+import java.io.PrintStream;
+import java.util.Arrays;
+
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.tx.TransactionBoundaryCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
@@ -25,23 +35,14 @@ import org.infinispan.stats.CacheStatisticManager;
 import org.infinispan.stats.ExtendedStatisticNotFoundException;
 import org.infinispan.stats.container.ExtendedStatistic;
 import org.infinispan.stats.logging.Log;
-import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.transaction.WriteSkewException;
+import org.infinispan.transaction.impl.TransactionTable;
 import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.TimeService;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.concurrent.locks.DeadlockDetectedException;
 import org.infinispan.util.concurrent.locks.LockManager;
 import org.infinispan.util.logging.LogFactory;
-
-import java.io.File;
-import java.io.IOException;
-import java.io.PrintStream;
-import java.util.Arrays;
-
-import static java.util.concurrent.TimeUnit.NANOSECONDS;
-import static org.infinispan.stats.container.ExtendedStatistic.*;
-import static org.infinispan.stats.percentiles.PercentileStatistic.*;
 
 /**
  * Take the statistics about relevant visitable commands.
@@ -75,6 +76,11 @@ public class ExtendedStatisticInterceptor extends BaseCustomInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return visitWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return visitWriteCommand(ctx, command, command.getKey());
    }
 

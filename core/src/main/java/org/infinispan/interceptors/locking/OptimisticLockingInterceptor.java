@@ -12,6 +12,7 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -145,6 +146,12 @@ public class OptimisticLockingInterceptor extends AbstractTxLockingInterceptor {
       protected void performWriteSkewCheck(TxInvocationContext ctx, Object key) {
          // A no-op
       }
+
+      @Override
+      public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+         return visitSingleKeyCommand(ctx, command);
+      }
+
       @Override
       public Object visitClearCommand(InvocationContext ctx, ClearCommand command) throws Throwable {
          return visitMultiKeyCommand(ctx, command, dataContainer.keySet());

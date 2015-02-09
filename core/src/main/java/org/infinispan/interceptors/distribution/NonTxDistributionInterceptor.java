@@ -1,11 +1,16 @@
 package org.infinispan.interceptors.distribution;
 
+import java.util.Collection;
+import java.util.HashSet;
+import java.util.Set;
+
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.RemoteFetchingCommand;
 import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.EntryProcessCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -18,8 +23,6 @@ import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
-
-import java.util.*;
 
 /**
  * Non-transactional interceptor used by distributed caches that support concurrent writes.
@@ -133,6 +136,11 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
+      return handleNonTxWriteCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
       return handleNonTxWriteCommand(ctx, command);
    }
 

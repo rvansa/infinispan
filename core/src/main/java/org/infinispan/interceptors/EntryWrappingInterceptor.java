@@ -1,5 +1,12 @@
 package org.infinispan.interceptors;
 
+import static org.infinispan.commons.util.Util.toStr;
+
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.Map;
+import java.util.Set;
+
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.DataCommand;
@@ -10,17 +17,7 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.DataWriteCommand;
-import org.infinispan.commands.write.EvictCommand;
-import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commands.write.InvalidateL1Command;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commands.write.*;
 import org.infinispan.commons.util.concurrent.ParallelIterableMap;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.EntryFactory;
@@ -46,13 +43,6 @@ import org.infinispan.statetransfer.StateTransferLock;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 import org.infinispan.xsite.statetransfer.XSiteStateConsumer;
-
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
-import java.util.Set;
-
-import static org.infinispan.commons.util.Util.toStr;
 
 /**
  * Interceptor in charge with wrapping entries and add them in caller's context.
@@ -191,6 +181,21 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
       if (shouldWrap(command.getKey(), ctx, command)) {
          entryFactory.wrapEntryForPut(ctx, command.getKey(), null, !command.isConditional(), command,
                                       command.hasFlag(Flag.IGNORE_RETURN_VALUES) && !command.isConditional());
+      }
+   }
+
+   @Override
+   public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+      // TODO: it seems that the wrapping logic needs to be simplified - there are
+      //       too many special branches and redundant logic
+      if (shouldWrap(command.getKey(), ctx, command)) {
+         entryFactory.wrapEntryForPut(ctx, command.getKey(), null, true, command, false);
+      }
+      try {
+         return setSkipRemoteGetsAndInvokeNextForDataCommand(ctx, command, command.getMetadata());
+      } catch (OutdatedTopologyException ote) {
+         command.setRetry(true);
+         throw ote;
       }
    }
 
@@ -569,6 +574,15 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
             } else  {
                entryFactory.wrapEntryForReplace(ctx, command);
             }
+            invokeNextInterceptor(ctx, command);
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitEntryProcessCommand(InvocationContext ctx, EntryProcessCommand command) throws Throwable {
+         if (cdl.localNodeIsOwner(command.getKey())) {
+            entryFactory.wrapEntryForPut(ctx, command.getKey(), null, true, command, false);
             invokeNextInterceptor(ctx, command);
          }
          return null;
