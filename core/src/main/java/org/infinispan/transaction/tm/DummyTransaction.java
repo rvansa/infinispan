@@ -1,9 +1,9 @@
 package org.infinispan.transaction.tm;
 
 
-import org.infinispan.util.logging.Log;
-import org.infinispan.util.logging.LogFactory;
-
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
 import javax.transaction.HeuristicMixedException;
 import javax.transaction.HeuristicRollbackException;
 import javax.transaction.RollbackException;
@@ -14,11 +14,10 @@ import javax.transaction.Transaction;
 import javax.transaction.xa.XAException;
 import javax.transaction.xa.XAResource;
 import javax.transaction.xa.Xid;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
+
+import org.infinispan.commons.util.CollectionFactory;
+import org.infinispan.util.logging.Log;
+import org.infinispan.util.logging.LogFactory;
 
 /**
  * @author bela
@@ -33,7 +32,7 @@ public class DummyTransaction implements Transaction {
    protected final Xid xid;
 
    protected Set<Synchronization> syncs;
-   private final List<XAResource> enlistedResources = new ArrayList<XAResource>(2);
+   private final List<XAResource> enlistedResources = CollectionFactory.makeList(2);
    private int prepareStatus;
 
    public DummyTransaction(DummyBaseTransactionManager tm) {
@@ -166,7 +165,7 @@ public class DummyTransaction implements Transaction {
    public void registerSynchronization(Synchronization sync) throws RollbackException, IllegalStateException, SystemException {
       if (sync == null)
          throw new IllegalArgumentException("null synchronization " + this);
-      if (syncs == null) syncs = new HashSet<Synchronization>(8);
+      if (syncs == null) syncs = CollectionFactory.makeSet(8);
 
       switch (status) {
          case Status.STATUS_ACTIVE:
