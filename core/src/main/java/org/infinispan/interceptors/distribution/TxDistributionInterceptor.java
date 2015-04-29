@@ -22,6 +22,7 @@ package org.infinispan.interceptors.distribution;
 import org.infinispan.atomic.DeltaCompositeKey;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.tx.CommitCommand;
@@ -153,8 +154,18 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+      return visitGetCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+      return visitGetCommand(ctx, command, false);
+   }
+
+   private Object visitGetCommand(InvocationContext ctx, AbstractDataCommand command, boolean returnEntry) throws Throwable {
       try {
          Object returnValue = invokeNextInterceptor(ctx, command);
+
          // If L1 caching is enabled, this is a remote command, and we found a value in our cache
          // we store it so that we can later invalidate it
          if (returnValue != null && isL1CacheEnabled && !ctx.isOriginLocal()) l1Manager.addRequestor(command.getKey(), ctx.getOrigin());
@@ -165,20 +176,22 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
          if (returnValue == null) {
             Object key = command.getKey();
             if (needsRemoteGet(ctx, command)) {
-               returnValue = remoteGetAndStoreInL1(ctx, key, false, command);
+               InternalCacheEntry ice = remoteGetAndStoreInL1(ctx, key, false, command);
+               returnValue = computeGetReturn(ice, returnEntry);
             }
             if (returnValue == null) {
-               returnValue = localGet(ctx, key, false, command);
+               InternalCacheEntry ice = localGetCacheEntry(ctx, key, false, command);
+               returnValue = computeGetReturn(ice, returnEntry);
             }
          }
          return returnValue;
       } catch (SuspectException e) {
          // retry
-         return visitGetKeyValueCommand(ctx, command);
+         return visitGetCommand(ctx, command, returnEntry);
       }
    }
 
-   private void lockAndWrap(InvocationContext ctx, Object key, InternalCacheEntry ice, FlagAffectedCommand command) throws InterruptedException {
+   protected void lockAndWrap(InvocationContext ctx, Object key, InternalCacheEntry ice, FlagAffectedCommand command) throws InterruptedException {
       boolean skipLocking = hasSkipLocking(command);
       long lockTimeout = getLockAcquisitionTimeout(command, skipLocking);
       lockManager.acquireLock(ctx, key, lockTimeout, skipLocking);
@@ -308,7 +321,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       return invokeNextInterceptor(ctx, command);
    }
 
-   private Object localGet(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
+   private InternalCacheEntry localGetCacheEntry(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
       InternalCacheEntry ice = dataContainer.get(key);
       if (ice != null) {
          if (isWrite && isPessimisticCache && ctx.isInTxScope()) {
@@ -320,9 +333,8 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
             else
                ctx.putLookedUpEntry(key, ice);
          }
-         return command instanceof GetCacheEntryCommand ? ice : ice.getValue();
       }
-      return null;
+      return ice;
    }
 
    private void remoteGetBeforeWrite(InvocationContext ctx, WriteCommand command, KeyGenerator keygen) throws Throwable {
@@ -333,9 +345,9 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       if (isNeedReliableReturnValues(command) || command.isConditional() || command.hasFlag(Flag.DELTA_WRITE) ||
             shouldFetchRemoteValuesForWriteSkewCheck(ctx, command)) {
          for (Object k : keygen.getKeys()) {
-            Object returnValue = remoteGetAndStoreInL1(ctx, k, true, command);
-            if (returnValue == null) {
-               localGet(ctx, k, true, command);
+            InternalCacheEntry ice = remoteGetAndStoreInL1(ctx, k, true, command);
+            if (ice == null || ice.getValue() == null) {
+               localGetCacheEntry(ctx, k, true, command);
             }
          }
       }
@@ -345,7 +357,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       return !isL1CacheEnabled || !dataContainer.containsKey(key);
    }
 
-   private Object remoteGetAndStoreInL1(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
+   private InternalCacheEntry remoteGetAndStoreInL1(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
       // todo [anistor] fix locality checks in StateTransferManager (ISPN-2401) and use them here
       DataLocality locality = dm.getReadConsistentHash().isKeyLocalToNode(rpcManager.getAddress(), key) ? DataLocality.LOCAL : DataLocality.NOT_LOCAL;
 
@@ -379,7 +391,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
                if (!readOwners.equals(writeOwners)) {
                   // todo [anistor] this check is not optimal and can yield false positives. here we should use StateTransferManager.isStateTransferInProgressForKey(key) after ISPN-2401 is fixed
                   if (trace) log.tracef("State transfer in progress for key %s, not storing to L1");
-                  return ice.getValue();
+                  return ice;
                }
 
 
@@ -404,7 +416,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
                      ctx.putLookedUpEntry(key, ice);
                }
             }
-            return ice.getValue();
+            return ice;
          }
       } else {
          if (trace) log.tracef("Not doing a remote get for key %s since entry is mapped to current node (%s), or is in L1.  Owners are %s", key, rpcManager.getAddress(), dm.locate(key));

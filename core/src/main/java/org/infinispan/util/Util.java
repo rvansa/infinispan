@@ -29,7 +29,6 @@ import org.infinispan.marshall.Marshaller;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
-import javax.naming.Context;
 import java.io.Closeable;
 import java.io.ObjectOutput;
 import java.io.OutputStream;
@@ -50,6 +49,7 @@ import java.util.Date;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
+import javax.naming.Context;
 
 /**
  * General utility methods used throughout the Infinispan code base.
@@ -428,6 +428,16 @@ public final class Util {
          i++;
       }
       return String.valueOf(result);
+   }
+
+   public static String toStr(Object o) {
+      if (o instanceof byte[]) {
+         return printArray((byte[]) o, false);
+      } else if (o == null) {
+         return "null";
+      } else {
+         return o.toString();
+      }
    }
 
    public static String padString(String s, int minWidth) {

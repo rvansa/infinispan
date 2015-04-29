@@ -27,6 +27,7 @@ import org.infinispan.commands.control.LockControlCommand;
 import org.infinispan.commands.module.ExtendedModuleCommandFactory;
 import org.infinispan.commands.module.ModuleCommandFactory;
 import org.infinispan.commands.read.DistributedExecuteCommand;
+import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.MapCombineCommand;
 import org.infinispan.commands.read.ReduceCommand;
@@ -143,6 +144,9 @@ public class RemoteCommandsFactory {
                break;
             case CacheTopologyControlCommand.COMMAND_ID:
                command = new CacheTopologyControlCommand();
+               break;
+            case GetCacheEntryCommand.COMMAND_ID:
+               command = new GetCacheEntryCommand();
                break;
             default:
                throw new CacheException("Unknown command id " + id + "!");

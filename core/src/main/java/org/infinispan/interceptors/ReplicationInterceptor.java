@@ -31,7 +31,12 @@ import org.infinispan.commands.remote.ClusteredGetCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
-import org.infinispan.commands.write.*;
+import org.infinispan.commands.write.ClearCommand;
+import org.infinispan.commands.write.PutKeyValueCommand;
+import org.infinispan.commands.write.PutMapCommand;
+import org.infinispan.commands.write.RemoveCommand;
+import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.Configurations;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -53,7 +58,9 @@ import org.infinispan.transaction.xa.GlobalTransaction;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
-import java.util.*;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
 import java.util.concurrent.TimeoutException;
 
 /**
@@ -128,6 +135,15 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+      return visitDataReadCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+      return visitDataReadCommand(ctx, command, true);
+   }
+
+   protected Object visitDataReadCommand(InvocationContext ctx, AbstractDataCommand command, boolean returnEntry) throws Throwable {
       try {
          Object returnValue = invokeNextInterceptor(ctx, command);
 
@@ -136,19 +152,21 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
          // the entry is mapped to the local node.
          if (returnValue == null && ctx.isOriginLocal()) {
             if (needsRemoteGet(ctx, command)) {
-               returnValue = remoteGet(ctx, command.getKey(), command, false);
+               InternalCacheEntry ice = remoteGetCacheEntry(ctx, command.getKey(), false, command);
+               return computeGetReturn(ice, returnEntry);
             }
             if (returnValue == null) {
-               returnValue = localGet(ctx, command.getKey(), false, command);
+               InternalCacheEntry ice = localGetCacheEntry(ctx, command.getKey(), false, command);
+               return computeGetReturn(ice, returnEntry);
             }
          }
          return returnValue;
       } catch (SuspectException e) {
          // retry
-         return visitGetKeyValueCommand(ctx, command);
+         return visitDataReadCommand(ctx, command, returnEntry);
       }
    }
-   
+
    @Override
    public Object visitLockControlCommand(TxInvocationContext ctx, LockControlCommand command) throws Throwable {
       Object retVal = invokeNextInterceptor(ctx, command);
@@ -175,7 +193,7 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
     * @return value of a remote get, or null
     * @throws Throwable if there are problems
     */
-   private Object remoteGet(InvocationContext ctx, Object key, FlagAffectedCommand command, boolean isWrite) throws Throwable {
+   private InternalCacheEntry remoteGetCacheEntry(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
       if (trace) {
          log.tracef("Key %s is not yet available on %s, so we may need to look elsewhere", key, rpcManager.getAddress());
       }
@@ -199,9 +217,8 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
                ctx.putLookedUpEntry(key, ice);
             }
          }
-         return ice.getValue();
       }
-      return null;
+      return ice;
    }
 
    protected Address getPrimaryOwner() {
@@ -229,7 +246,7 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
       return null;
    }
 
-   private Object localGet(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
+   private InternalCacheEntry localGetCacheEntry(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
       InternalCacheEntry ice = dataContainer.get(key);
       if (ice != null) {
          if (!ctx.replaceValue(key, ice.getValue())) {
@@ -238,9 +255,8 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
             else
                ctx.putLookedUpEntry(key, ice);
          }
-         return command instanceof GetCacheEntryCommand ? ice : ice.getValue();
       }
-      return null;
+      return ice;
    }
 
    private void lockAndWrap(InvocationContext ctx, Object key, InternalCacheEntry ice, FlagAffectedCommand command) throws InterruptedException {
@@ -312,13 +328,13 @@ public class ReplicationInterceptor extends ClusteringInterceptor {
       if (command instanceof AbstractDataCommand && (isNeedReliableReturnValues(command) || command.isConditional())) {
          AbstractDataCommand singleKeyCommand = (AbstractDataCommand) command;
 
-         Object returnValue = null;
+         InternalCacheEntry ice = null;
          // get it remotely if we do not have it yet
          if (needsRemoteGet(ctx, singleKeyCommand)) {
-            returnValue = remoteGet(ctx, singleKeyCommand.getKey(), singleKeyCommand, true);
+            ice = remoteGetCacheEntry(ctx, singleKeyCommand.getKey(), true, singleKeyCommand);
          }
-         if (returnValue == null) {
-            localGet(ctx, singleKeyCommand.getKey(), true, command);
+         if (ice == null || ice.getValue() == null) {
+            localGetCacheEntry(ctx, singleKeyCommand.getKey(), true, command);
          }
       }
    }

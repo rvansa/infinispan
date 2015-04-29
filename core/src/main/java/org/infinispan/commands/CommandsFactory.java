@@ -148,14 +148,16 @@ public interface CommandsFactory {
    /**
     * Builds a GetKeyValueCommand
     * @param key key to get
+    * @param flags Command flags provided by cache
     * @return a GetKeyValueCommand
     */
    GetKeyValueCommand buildGetKeyValueCommand(Object key, Set<Flag> flags);
 
    /**
-    * Builds a GetKeyValueCommand
+    * Builds a GetCacheEntryCommand
     * @param key key to get
-    * @return a GetKeyValueCommand
+    * @param flags Command flags provided by cache
+    * @return a GetCacheEntryCommand
     */
    GetCacheEntryCommand buildGetCacheEntryCommand(Object key, Set<Flag> flags);
 

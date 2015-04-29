@@ -21,8 +21,10 @@ package org.infinispan.interceptors.distribution;
 
 import org.infinispan.CacheException;
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.RemoteFetchingCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.WriteCommand;
@@ -62,21 +64,32 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+      return visitRemoteFetchingCommand(ctx, command, false);
+   }
+
+   @Override
+   public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+      return visitRemoteFetchingCommand(ctx, command, true);
+   }
+
+   private <T extends AbstractDataCommand & RemoteFetchingCommand> Object visitRemoteFetchingCommand(InvocationContext ctx, T command, boolean returnEntry) throws Throwable {
       try {
          Object returnValue = invokeNextInterceptor(ctx, command);
          if (returnValue == null) {
             Object key = command.getKey();
             if (needsRemoteGet(ctx, command)) {
-               returnValue = remoteGet(ctx, key, command);
+               InternalCacheEntry remoteEntry = remoteGetCacheEntry(ctx, key, command);
+               returnValue = computeGetReturn(remoteEntry, returnEntry);
             }
             if (returnValue == null) {
-               returnValue = localGet(ctx, key, false, command);
+               InternalCacheEntry remoteEntry = localGetCacheEntry(ctx, key, false, command);
+               returnValue = computeGetReturn(remoteEntry, returnEntry);
             }
          }
          return returnValue;
       } catch (SuspectException e) {
          // retry
-         return visitGetKeyValueCommand(ctx, command);
+         return visitRemoteFetchingCommand(ctx, command, returnEntry);
       }
    }
 
@@ -141,7 +154,7 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
                // We either did not go remotely (because the value should be local now) or we did but the remote value is null.
                // Then it makes sense to try a local get and wrap again. This will compensate the fact the the entry was not local
                // earlier when the EntryWrappingInterceptor executed during current invocation context but it should be now.
-               localGet(ctx, k, true, command);
+               localGetCacheEntry(ctx, k, true, command);
             }
          }
       }
@@ -169,7 +182,7 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       return null;
    }
 
-   private Object localGet(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
+   private InternalCacheEntry localGetCacheEntry(InvocationContext ctx, Object key, boolean isWrite, FlagAffectedCommand command) throws Throwable {
       InternalCacheEntry ice = dataContainer.get(key);
       if (ice != null) {
          if (!ctx.replaceValue(key, ice.getValue()))  {
@@ -178,9 +191,8 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
             else
                ctx.putLookedUpEntry(key, ice);
          }
-         return command instanceof GetCacheEntryCommand ? ice : ice.getValue();
       }
-      return null;
+      return ice;
    }
 
    protected Object handleLocalWrite(InvocationContext ctx, WriteCommand command, RecipientGenerator rg, boolean skipL1Invalidation, boolean sync) throws Throwable {
@@ -204,14 +216,11 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    protected void handleRemoteWrite(InvocationContext ctx, WriteCommand command, RecipientGenerator recipientGenerator, boolean skipL1Invalidation, boolean sync) throws Throwable {}
 
-   private Object remoteGet(InvocationContext ctx, Object key, GetKeyValueCommand command) throws Throwable {
+   private <T extends FlagAffectedCommand & RemoteFetchingCommand> InternalCacheEntry remoteGetCacheEntry(InvocationContext ctx, Object key, T command) throws Throwable {
       if (trace) log.tracef("Doing a remote get for key %s", key);
       InternalCacheEntry ice = retrieveFromRemoteSource(key, ctx, false, command);
       command.setRemotelyFetchedValue(ice);
-      if (ice != null) {
-         return ice.getValue();
-      }
-      return null;
+      return ice;
    }
 
    protected Object getResponseFromPrimaryOwner(Address primaryOwner, Map<Address, Response> addressResponseMap) {

@@ -20,47 +20,98 @@
  * Software Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA
  * 02110-1301 USA, or see the FSF site: http://www.fsf.org.
  */
-
 package org.infinispan.commands.read;
 
+import org.infinispan.commands.Visitor;
+import org.infinispan.container.InternalEntryFactory;
+import org.infinispan.container.entries.CacheEntry;
+import org.infinispan.container.entries.InternalCacheEntry;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
 
 import java.util.Set;
 
+import static org.infinispan.util.Util.toStr;
+
 /**
- * An internal cache get command that returns
- * {@link org.infinispan.container.entries.CacheEntry}
- * instead of just the value.
+ * Used to fetch a full CacheEntry rather than just the value.
+ * This functionality was originally incorporated into GetKeyValueCommand.
  *
- * @author Galder Zamarreño
- * @since 5.1
+ * @author Sanne Grinovero <sanne@hibernate.org> (C) 2014 Red Hat Inc.
  */
-public class GetCacheEntryCommand extends GetKeyValueCommand {
+public final class GetCacheEntryCommand extends AbstractDataCommand implements RemoteFetchingCommand {
 
-   public static final byte COMMAND_ID = 33;
+   public static final byte COMMAND_ID = 45;
 
-   @SuppressWarnings("unused")
-   private GetCacheEntryCommand() {
-      // For command id uniqueness test
+   private InternalEntryFactory entryFactory;
+   private InternalCacheEntry remotelyFetchedValue;
+
+   public GetCacheEntryCommand(Object key, Set<Flag> flags, InternalEntryFactory entryFactory) {
+      this.key = key;
+      this.flags = flags;
+      this.entryFactory = entryFactory;
    }
 
-   public GetCacheEntryCommand(Object key, Set<Flag> flags) {
-      super(key, flags);
+   public GetCacheEntryCommand() {
+   }
+
+   @Override
+   public Object acceptVisitor(InvocationContext ctx, Visitor visitor) throws Throwable {
+      return visitor.visitGetCacheEntryCommand(ctx, this);
    }
 
    @Override
    public Object perform(InvocationContext ctx) throws Throwable {
-      Object ret = super.perform(ctx);
-      if (ret != null)
-         return ctx.lookupEntry(key);
-
-      return null;
+      CacheEntry entry = ctx.lookupEntry(key);
+      if (entry == null || entry.isNull()) {
+         return null;
+      }
+      if (entry.isRemoved()) {
+         return null;
+      }
+      return entryFactory.copy(entry);
    }
 
    @Override
    public byte getCommandId() {
       return COMMAND_ID;
+   }
+
+   @Override
+   public void setParameters(int commandId, Object[] parameters) {
+      if (commandId != COMMAND_ID) throw new IllegalStateException("Invalid method id");
+      key = parameters[0];
+      flags = (Set<Flag>) parameters[1];
+   }
+
+   /**
+    * @see #getRemotelyFetchedValue()
+    */
+   public void setRemotelyFetchedValue(InternalCacheEntry remotelyFetchedValue) {
+      this.remotelyFetchedValue = remotelyFetchedValue;
+   }
+
+   /**
+    * If the cache needs to go remotely in order to obtain the value associated to this key, then the remote value
+    * is stored in this field.
+    * TODO: this method should be able to removed with the refactoring from ISPN-2177
+    */
+   public InternalCacheEntry getRemotelyFetchedValue() {
+      return remotelyFetchedValue;
+   }
+
+   @Override
+   public Object[] getParameters() {
+      return new Object[]{key, Flag.copyWithoutRemotableFlags(flags)};
+   }
+
+   public String toString() {
+      return new StringBuilder()
+            .append("GetCacheEntryCommand {key=")
+            .append(toStr(key))
+            .append(", flags=").append(flags)
+            .append("}")
+            .toString();
    }
 
 }

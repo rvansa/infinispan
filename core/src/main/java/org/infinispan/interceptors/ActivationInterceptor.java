@@ -22,6 +22,7 @@
  */
 package org.infinispan.interceptors;
 
+import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -103,6 +104,13 @@ public class ActivationInterceptor extends CacheLoaderInterceptor {
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
       Object retval = super.visitGetKeyValueCommand(ctx, command);
+      removeFromStoreIfNeeded(command.getKey());
+      return retval;
+   }
+
+   @Override
+   public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+      Object retval = super.visitGetCacheEntryCommand(ctx, command);
       removeFromStoreIfNeeded(command.getKey());
       return retval;
    }

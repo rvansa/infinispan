@@ -73,13 +73,13 @@ import org.infinispan.factories.annotations.ComponentName;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.InterceptorChain;
-import org.infinispan.statetransfer.StateProvider;
-import org.infinispan.statetransfer.StateConsumer;
-import org.infinispan.statetransfer.StateRequestCommand;
-import org.infinispan.statetransfer.StateResponseCommand;
-import org.infinispan.statetransfer.StateChunk;
 import org.infinispan.notifications.cachelistener.CacheNotifier;
 import org.infinispan.remoting.transport.Address;
+import org.infinispan.statetransfer.StateChunk;
+import org.infinispan.statetransfer.StateConsumer;
+import org.infinispan.statetransfer.StateProvider;
+import org.infinispan.statetransfer.StateRequestCommand;
+import org.infinispan.statetransfer.StateResponseCommand;
 import org.infinispan.statetransfer.StateTransferManager;
 import org.infinispan.transaction.RemoteTransaction;
 import org.infinispan.transaction.TransactionTable;
@@ -92,13 +92,13 @@ import org.infinispan.util.logging.LogFactory;
 import org.infinispan.xsite.BackupSender;
 import org.infinispan.xsite.XSiteAdminCommand;
 
-import javax.transaction.xa.Xid;
 import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
+import javax.transaction.xa.Xid;
 
 /**
  * @author Mircea.Markus@jboss.com
@@ -247,7 +247,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
 
    @Override
    public GetCacheEntryCommand buildGetCacheEntryCommand(Object key, Set<Flag> flags) {
-      return new GetCacheEntryCommand(key, flags);
+      return new GetCacheEntryCommand(key, flags, entryFactory);
    }
 
    @Override

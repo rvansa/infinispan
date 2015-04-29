@@ -21,7 +21,10 @@ package org.infinispan.interceptors.distribution;
 
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.read.AbstractDataCommand;
+import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.RemoteFetchingCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
@@ -80,6 +83,15 @@ public class L1NonTxInterceptor extends BaseRpcInterceptor {
 
    @Override
    public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+      return visitDataReadCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+      return visitDataReadCommand(ctx, command);
+   }
+
+   protected <T extends AbstractDataCommand & RemoteFetchingCommand> Object visitDataReadCommand(InvocationContext ctx, T command) throws Throwable {
       Object returnValue = invokeNextInterceptor(ctx, command);
       InternalCacheEntry ice = command.getRemotelyFetchedValue();
       if (ctx.isOriginLocal() && ice != null) {

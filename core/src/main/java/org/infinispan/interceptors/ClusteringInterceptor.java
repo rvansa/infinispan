@@ -117,4 +117,10 @@ public abstract class ClusteringInterceptor extends BaseRpcInterceptor {
     * @return an internal cache entry, or null if it cannot be located
     */
    protected abstract InternalCacheEntry retrieveFromRemoteSource(Object key, InvocationContext ctx, boolean acquireRemoteLock, FlagAffectedCommand command) throws Exception;
+
+   protected Object computeGetReturn(InternalCacheEntry entry, boolean returnEntry) {
+      if (!returnEntry && entry != null)
+         return entry.getValue();
+      return entry;
+   }
 }

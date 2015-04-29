@@ -26,7 +26,7 @@ import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.Visitor;
 import org.infinispan.commands.control.LockControlCommand;
-import org.infinispan.commands.read.GetKeyValueCommand;
+import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.container.InternalEntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -126,7 +126,7 @@ public class ClusteredGetCommand extends BaseRpcCommand implements FlagAffectedC
       // as our caller is already calling the ClusteredGetCommand on all the relevant nodes
       Set<Flag> commandFlags = EnumSet.of(Flag.SKIP_REMOTE_LOOKUP, Flag.CACHE_MODE_LOCAL);
       if (this.flags != null) commandFlags.addAll(this.flags);
-      GetKeyValueCommand command = commandsFactory.buildGetCacheEntryCommand(key, commandFlags);
+      GetCacheEntryCommand command = commandsFactory.buildGetCacheEntryCommand(key, commandFlags);
       InvocationContext invocationContext = icc.createRemoteInvocationContextForCommand(command, getOrigin());
       CacheEntry cacheEntry = (CacheEntry) invoker.invoke(invocationContext, command);
       if (cacheEntry == null) {
