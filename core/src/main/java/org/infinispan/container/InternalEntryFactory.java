@@ -107,4 +107,9 @@ public interface InternalEntryFactory {
     * @return an {@link InternalCacheValue}
     */
    InternalCacheValue createValue(CacheEntry cacheEntry);
+
+   /**
+    * Creates a copy of this cache entry.
+    */
+   CacheEntry copy(CacheEntry cacheEntry);
 }

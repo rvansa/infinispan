@@ -357,4 +357,13 @@ public class DeltaAwareCacheEntry implements CacheEntry, StateChangingEntry {
    public void setVersion(EntryVersion version) {
       // TODO: DeltaAware are always unversioned!  Since concurrent version updates are possible with the FineGrainedAtomicMap
    }
+
+   @Override
+   public DeltaAwareCacheEntry clone() {
+      try {
+         return (DeltaAwareCacheEntry) super.clone();
+      } catch (CloneNotSupportedException e) {
+         throw new IllegalStateException(e);
+      }
+   }
 }

@@ -74,6 +74,12 @@ public class InternalEntryFactoryImpl implements InternalEntryFactory {
    }
 
    @Override
+   public CacheEntry copy(CacheEntry cacheEntry) {
+      // brought backporting ISPN-5032; ISPN-4424 has this synchronized
+      return cacheEntry.clone();
+   }
+
+   @Override
    public InternalCacheEntry create(Object key, Object value, EntryVersion ignored, long lifespan, long maxIdle) {
       if (lifespan < 0 && maxIdle < 0) return new ImmortalCacheEntry(key, value);
       if (lifespan > -1 && maxIdle < 0) return new MortalCacheEntry(key, value, lifespan);

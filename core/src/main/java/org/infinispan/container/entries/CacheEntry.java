@@ -35,7 +35,7 @@ import java.util.Map;
  * @author Galder Zamarreño
  * @since 4.0
  */
-public interface CacheEntry extends Map.Entry<Object, Object>, Versioned {
+public interface CacheEntry extends Cloneable, Map.Entry<Object, Object>, Versioned {
 
    /**
     * Tests whether the entry represents a null value, typically used for repeatable read.
@@ -158,4 +158,6 @@ public interface CacheEntry extends Map.Entry<Object, Object>, Versioned {
     * flag is set to false.
     */
    boolean undelete(boolean doUndelete);
+
+   CacheEntry clone();
 }

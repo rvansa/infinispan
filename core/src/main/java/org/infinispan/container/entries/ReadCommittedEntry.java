@@ -324,4 +324,13 @@ public class ReadCommittedEntry implements MVCCEntry {
       }
       return false;
    }
+
+   @Override
+   public ReadCommittedEntry clone() {
+      try {
+         return (ReadCommittedEntry) super.clone();
+      } catch (CloneNotSupportedException e) {
+         throw new IllegalStateException(e);
+      }
+   }
 }
