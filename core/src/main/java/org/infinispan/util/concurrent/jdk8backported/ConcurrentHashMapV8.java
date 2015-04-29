@@ -13,9 +13,6 @@
 
 package org.infinispan.util.concurrent.jdk8backported;
 
-import org.infinispan.util.concurrent.jdk8backported.CountedCompleter;
-import org.infinispan.util.concurrent.jdk8backported.ForkJoinPool;
-
 import java.io.ObjectStreamField;
 import java.io.Serializable;
 import java.lang.reflect.ParameterizedType;
@@ -23,7 +20,6 @@ import java.lang.reflect.Type;
 import java.util.AbstractMap;
 import java.util.Arrays;
 import java.util.Collection;
-import java.util.Comparator;
 import java.util.ConcurrentModificationException;
 import java.util.Enumeration;
 import java.util.HashMap;
@@ -33,8 +29,8 @@ import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Set;
 import java.util.concurrent.ConcurrentMap;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.LockSupport;
 import java.util.concurrent.locks.ReentrantLock;
 
@@ -4518,7 +4514,7 @@ public class ConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      (containsAll(c) && c.containsAll(this))));
       }
 
-      public ConcurrentHashMapSpliterator<K> spliterator() {
+      public ConcurrentHashMapSpliterator<K> spliteratorV8() {
          Node<K,V>[] t;
          ConcurrentHashMapV8<K,V> m = map;
          long n = m.sumCount();
@@ -4576,7 +4572,7 @@ public class ConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
          throw new UnsupportedOperationException();
       }
 
-      public ConcurrentHashMapSpliterator<V> spliterator() {
+      public ConcurrentHashMapSpliterator<V> spliteratorV8() {
          Node<K,V>[] t;
          ConcurrentHashMapV8<K,V> m = map;
          long n = m.sumCount();
@@ -4664,7 +4660,7 @@ public class ConcurrentHashMapV8<K,V> extends AbstractMap<K,V>
                      (containsAll(c) && c.containsAll(this))));
       }
 
-      public ConcurrentHashMapSpliterator<Map.Entry<K,V>> spliterator() {
+      public ConcurrentHashMapSpliterator<Map.Entry<K,V>> spliteratorV8() {
          Node<K,V>[] t;
          ConcurrentHashMapV8<K,V> m = map;
          long n = m.sumCount();
