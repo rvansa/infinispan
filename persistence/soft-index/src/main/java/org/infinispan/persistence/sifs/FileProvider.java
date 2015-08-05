@@ -69,6 +69,7 @@ class FileProvider {
                   FileChannel fileChannel;
                   try {
                      fileChannel = openChannel(fileId);
+                     log.debug("Opened file " + fileId);
                   } catch (FileNotFoundException e) {
                      currentOpenFiles.decrementAndGet();
                      log.debug("File " + fileId + " was not found", e);
@@ -77,6 +78,7 @@ class FileProvider {
                   Record newRecord = new Record(fileChannel, fileId);
                   Record other = openFiles.putIfAbsent(fileId, newRecord);
                   if (other != null) {
+                     log.debug("Closing file " + fileId + " as it is already open.");
                      fileChannel.close();
                      synchronized (other) {
                         if (other.isOpen()) {
@@ -202,7 +204,7 @@ class FileProvider {
       if (!openFiles.isEmpty()) throw new IllegalStateException();
       for (File file : dataDir.listFiles()) {
          if (!file.delete()) {
-            throw new IOException("Cannot delete file " + file);
+            throw new IOException("Cannot delete file " + file + ", exists? " + file.exists());
          }
       }
       lock.writeLock().unlock();
@@ -352,6 +354,7 @@ class FileProvider {
       }
 
       public void close() throws IOException {
+         log.debug("Closing file " + fileId);
          fileChannel.close();
          fileChannel = null;
          if (deleteOnClose) {
@@ -367,6 +370,7 @@ class FileProvider {
       public void deleteOnClose() throws IOException {
          if (handleCount == 0) {
             if (fileChannel != null) {
+               log.debug("Closing file " + fileId);
                fileChannel.close();
                fileChannel = null;
             }
