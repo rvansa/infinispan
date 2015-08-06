@@ -8,6 +8,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
@@ -203,8 +204,36 @@ class FileProvider {
       if (!recordQueue.isEmpty()) throw new IllegalStateException();
       if (!openFiles.isEmpty()) throw new IllegalStateException();
       for (File file : dataDir.listFiles()) {
-         if (!file.delete()) {
-            throw new IOException("Cannot delete file " + file + ", exists? " + file.exists());
+         /* Debugging code */
+         for (int i = 0; i < 10; ++i) {
+            try {
+               Files.delete(file.toPath());
+               log.infof("Regular delete of %s succeeded", file);
+               break;
+            } catch (IOException e) {
+               log.errorf(e, "Failed to delete %s", file);
+               try {
+                  Thread.sleep(1000);
+               } catch (InterruptedException e1) {
+                  Thread.currentThread().interrupt();
+                  log.error("Interrupted", e);
+                  break;
+               }
+            }
+         }
+         if (file.exists()) {
+            System.gc();
+            try {
+               Files.delete(file.toPath());
+               log.infof("Succeeded to delete %s after System.gc()", file);
+            } catch (IOException e) {
+               log.errorf(e, "Failed to delete %s after System.gc()", file);
+            }
+         }
+         if (file.exists()) {
+            file.setWritable(true);
+            Files.delete(file.toPath());
+            log.infof("Succeeded to delete %s after setWritable(true)", file);
          }
       }
       lock.writeLock().unlock();
