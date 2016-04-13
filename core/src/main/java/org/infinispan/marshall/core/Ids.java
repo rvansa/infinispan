@@ -174,4 +174,6 @@ public interface Ids extends org.infinispan.commons.marshall.Ids {
    int AFFINITY_FUNCTION_PARTITIONER = 165;
 
    int PERSISTENT_UUID = 166;
+
+   int DATA_WRITE_RESPONSE = 167;
 }

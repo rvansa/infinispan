@@ -21,6 +21,7 @@ import java.util.Map;
 public class CompletableFutures {
 
    private static final CompletableFuture completedEmptyMapFuture = CompletableFuture.completedFuture(Collections.emptyMap());
+   public static final CompletableFuture<Void> COMPLETED_FUTURE = CompletableFuture.completedFuture(null);
    public static final long BIG_DELAY_NANOS = TimeUnit.DAYS.toNanos(1);
 
    public static <K,V> CompletableFuture<Map<K, V>> returnEmptyMap() {

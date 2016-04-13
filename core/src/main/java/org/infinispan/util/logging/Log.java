@@ -1412,4 +1412,7 @@ public interface Log extends BasicLogger {
    @LogMessage(level = WARN)
    @Message(value = "Classpath does not look correct. Make sure you are not mixing uber and jars", id = 411)
    void warnAboutUberJarDuplicates();
+
+   @Message(value = "Timeout after %s waiting for acks. Missing acks are %s", id = 412)
+   TimeoutException timeoutWaitingForAcks(String timeout, String missingAcks);
 }

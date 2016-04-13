@@ -114,8 +114,8 @@ public class NonTotalOrderPerCacheInboundInvocationHandler extends BasePerCacheI
             }
 
             @Override
-            protected void onFinally() {
-               super.onFinally();
+            protected void onException(Throwable throwable) {
+               super.onException(throwable);
                readyAction.cleanup();
             }
          };

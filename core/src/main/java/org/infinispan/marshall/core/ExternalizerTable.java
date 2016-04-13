@@ -8,6 +8,7 @@ import org.infinispan.atomic.impl.PutOperation;
 import org.infinispan.atomic.impl.RemoveOperation;
 import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.RemoteCommandsFactory;
+import org.infinispan.commands.write.DataWriteCommandResponse;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commons.CacheConfigurationException;
 import org.infinispan.commons.hash.MurmurHash3;
@@ -384,6 +385,7 @@ public class ExternalizerTable implements ObjectTable {
       addInternalExternalizer(new MarshallableFunctionExternalizers.LambdaWithMetasExternalizer());
       addInternalExternalizer(new MarshallableFunctionExternalizers.SetValueIfEqualsReturnBooleanExternalizer());
       addInternalExternalizer(new PersistentUUID.Externalizer());
+      addInternalExternalizer(new DataWriteCommandResponse.Externalizer());
    }
 
    void addInternalExternalizer(AdvancedExternalizer<?> ext) {

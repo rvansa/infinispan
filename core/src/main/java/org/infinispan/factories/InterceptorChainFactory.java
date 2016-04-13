@@ -32,6 +32,7 @@ import org.infinispan.interceptors.MarshalledValueInterceptor;
 import org.infinispan.interceptors.NotificationInterceptor;
 import org.infinispan.interceptors.SequentialInterceptor;
 import org.infinispan.interceptors.SequentialInterceptorChain;
+import org.infinispan.interceptors.TriangleInterceptor;
 import org.infinispan.interceptors.TxInterceptor;
 import org.infinispan.interceptors.VersionedEntryWrappingInterceptor;
 import org.infinispan.interceptors.compat.TypeConverterInterceptor;
@@ -128,6 +129,11 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
          interceptorChain.appendInterceptor(createInterceptor(new BatchingInterceptor(), BatchingInterceptor.class), false);
       }
       interceptorChain.appendInterceptor(createInterceptor(new InvocationContextInterceptor(), InvocationContextInterceptor.class), false);
+
+      if (configuration.transaction().transactionMode() == TransactionMode.NON_TRANSACTIONAL &&
+            (cacheMode.isDistributed() || cacheMode.isReplicated())) {
+         interceptorChain.appendInterceptor(createInterceptor(new TriangleInterceptor(), TriangleInterceptor.class), false);
+      }
 
       CompatibilityModeConfiguration compatibility = configuration.compatibility();
       if (compatibility.enabled()) {

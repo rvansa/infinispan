@@ -41,6 +41,7 @@ import org.infinispan.commands.tx.totalorder.TotalOrderRollbackCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
 import org.infinispan.commands.write.ApplyDeltaCommand;
+import org.infinispan.commands.write.BackupAckCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.InvalidateCommand;
@@ -71,6 +72,7 @@ import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.functional.impl.Params;
 import org.infinispan.interceptors.InterceptorChain;
+import org.infinispan.interceptors.SequentialInterceptorChain;
 import org.infinispan.interceptors.locking.ClusteringDependentLogic;
 import org.infinispan.marshall.core.ExternalizerTable;
 import org.infinispan.metadata.Metadata;
@@ -161,6 +163,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
    private ClusterStreamManager clusterStreamManager;
    private ClusteringDependentLogic clusteringDependentLogic;
    private TimeService timeService;
+   private SequentialInterceptorChain sequentialInterceptorChain;
 
    private Map<Byte, ModuleCommandInitializer> moduleCommandInitializers;
    private ExternalizerTable externalizerTable;
@@ -177,7 +180,8 @@ public class CommandsFactoryImpl implements CommandsFactory {
                                  XSiteStateTransferManager xSiteStateTransferManager,
                                  GroupManager groupManager, PartitionHandlingManager partitionHandlingManager,
                                  LocalStreamManager localStreamManager, ClusterStreamManager clusterStreamManager,
-                                 ClusteringDependentLogic clusteringDependentLogic, ExternalizerTable externalizerTable) {
+                                 ClusteringDependentLogic clusteringDependentLogic, ExternalizerTable externalizerTable,
+                                 SequentialInterceptorChain sequentialInterceptorChain) {
       this.dataContainer = container;
       this.notifier = notifier;
       this.cache = cache;
@@ -204,6 +208,7 @@ public class CommandsFactoryImpl implements CommandsFactory {
       this.clusteringDependentLogic = clusteringDependentLogic;
       this.timeService = timeService;
       this.externalizerTable = externalizerTable;
+      this.sequentialInterceptorChain = sequentialInterceptorChain;
    }
 
    @Start(priority = 1)
@@ -511,6 +516,10 @@ public class CommandsFactoryImpl implements CommandsFactory {
             RemoveExpiredCommand removeExpiredCommand = (RemoveExpiredCommand) c;
             removeExpiredCommand.init(notifier, configuration);
             break;
+         case BackupAckCommand.COMMAND_ID:
+            BackupAckCommand command = (BackupAckCommand) c;
+            command.setInterceptorChain(sequentialInterceptorChain);
+            break;
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
             if (mci != null) {
@@ -716,6 +725,13 @@ public class CommandsFactoryImpl implements CommandsFactory {
          Map<? extends K, ? extends V> entries, BiConsumer<V, WriteEntryView<V>> f, Params params) {
       WriteOnlyManyEntriesCommand<K, V> cmd = new WriteOnlyManyEntriesCommand<>(entries, f);
       cmd.setParams(params);
+      return cmd;
+   }
+
+   @Override
+   public BackupAckCommand buildBackupAckCommand(CommandInvocationId id) {
+      BackupAckCommand cmd = new BackupAckCommand(cacheName);
+      cmd.setCommandInvocationId(id);
       return cmd;
    }
 

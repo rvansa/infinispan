@@ -530,6 +530,9 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
             commitContextEntries(ctx, command, metadata);
          } finally {
             stateTransferLock.releaseSharedTopologyLock();
+            if (result instanceof DataWriteCommandResponse) {
+               ((DataWriteCommandResponse) result).notifyEntriesUpdated();
+            }
          }
       }
 

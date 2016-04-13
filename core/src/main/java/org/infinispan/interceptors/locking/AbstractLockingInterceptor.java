@@ -10,6 +10,7 @@ import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.DataWriteCommand;
+import org.infinispan.commands.write.DataWriteCommandResponse;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -89,14 +90,20 @@ public abstract class AbstractLockingInterceptor extends CommandInterceptor {
 
    // We need this method in here because of putForExternalRead
    protected final Object visitNonTxDataWriteCommand(InvocationContext ctx, DataWriteCommand command) throws Throwable {
+      Object result = null;
       try {
          if (hasSkipLocking(command) || !shouldLockKey(command.getKey())) {
             return invokeNextInterceptor(ctx, command);
          }
          lockAndRecord(ctx, command.getKey(), getLockTimeoutMillis(command));
-         return invokeNextInterceptor(ctx, command);
+         result = invokeNextInterceptor(ctx, command);
+         return result;
       } finally {
-         lockManager.unlockAll(ctx);
+         if (result != null && result instanceof DataWriteCommandResponse) {
+            ((DataWriteCommandResponse) result).getBackups().thenRun(() -> lockManager.unlockAll(ctx));
+         } else {
+            lockManager.unlockAll(ctx);
+         }
       }
    }
 

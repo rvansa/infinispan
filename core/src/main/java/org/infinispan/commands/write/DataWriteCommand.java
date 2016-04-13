@@ -1,5 +1,6 @@
 package org.infinispan.commands.write;
 
+import org.infinispan.commands.CommandInvocationId;
 import org.infinispan.commands.DataCommand;
 
 /**
@@ -9,4 +10,7 @@ import org.infinispan.commands.DataCommand;
  * @since 4.0
  */
 public interface DataWriteCommand extends WriteCommand, DataCommand {
+
+   CommandInvocationId getCommandInvocationId();
+
 }
