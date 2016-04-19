@@ -47,7 +47,7 @@ public class TriangleInterceptor extends CommandInterceptor {
          return SuccessfulResponse.create(response);
       } else {
          //don't need to send the return value.
-         return SuccessfulResponse.create(new DataWriteCommandResponse(response.isSuccessful()));
+         return SuccessfulResponse.create(new DataWriteCommandResponse(null, response.isSuccessful()));
       }
    }
 }

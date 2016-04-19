@@ -32,8 +32,8 @@ public class DataWriteCommandResponse {
       this(returnValue, CompletableFutures.COMPLETED_FUTURE, false);
    }
 
-   public DataWriteCommandResponse(boolean successfull) {
-      this(null, CompletableFutures.COMPLETED_FUTURE, CompletableFutures.COMPLETED_FUTURE, successfull);
+   public DataWriteCommandResponse(Object returnValue, boolean successfull) {
+      this(returnValue, CompletableFutures.COMPLETED_FUTURE, CompletableFutures.COMPLETED_FUTURE, successfull);
    }
 
    private DataWriteCommandResponse(Object returnValue, CompletableFuture<?> backups, boolean successful) {

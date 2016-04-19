@@ -40,19 +40,7 @@ import org.infinispan.commands.tx.totalorder.TotalOrderNonVersionedPrepareComman
 import org.infinispan.commands.tx.totalorder.TotalOrderRollbackCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedCommitCommand;
 import org.infinispan.commands.tx.totalorder.TotalOrderVersionedPrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.BackupAckCommand;
-import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.EvictCommand;
-import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commands.write.InvalidateL1Command;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.RemoveExpiredCommand;
-import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commands.write.ValueMatcher;
-import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commands.write.*;
 import org.infinispan.commons.api.functional.EntryView.ReadEntryView;
 import org.infinispan.commons.api.functional.EntryView.ReadWriteEntryView;
 import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
@@ -517,8 +505,12 @@ public class CommandsFactoryImpl implements CommandsFactory {
             removeExpiredCommand.init(notifier, configuration);
             break;
          case BackupAckCommand.COMMAND_ID:
-            BackupAckCommand command = (BackupAckCommand) c;
-            command.setInterceptorChain(sequentialInterceptorChain);
+            BackupAckCommand backupAckCommand = (BackupAckCommand) c;
+            backupAckCommand.setInterceptorChain(sequentialInterceptorChain);
+            break;
+         case PrimaryAckCommand.COMMAND_ID:
+            PrimaryAckCommand primaryAckCommand = (PrimaryAckCommand) c;
+            primaryAckCommand.setInterceptorChain(sequentialInterceptorChain);
             break;
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
@@ -732,6 +724,14 @@ public class CommandsFactoryImpl implements CommandsFactory {
    public BackupAckCommand buildBackupAckCommand(CommandInvocationId id) {
       BackupAckCommand cmd = new BackupAckCommand(cacheName);
       cmd.setCommandInvocationId(id);
+      return cmd;
+   }
+
+   @Override
+   public PrimaryAckCommand buildPrimaryAckCommand(CommandInvocationId id, Object returnValue, Throwable exception, boolean successful) {
+      PrimaryAckCommand cmd = new PrimaryAckCommand(cacheName);
+      cmd.setCommandInvocationId(id);
+      cmd.setResult(returnValue, exception, successful);
       return cmd;
    }
 

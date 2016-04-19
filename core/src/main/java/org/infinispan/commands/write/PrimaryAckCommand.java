@@ -13,16 +13,19 @@ import java.io.ObjectOutput;
 /**
  * // TODO: Document this
  *
- * @author Pedro Ruivo
- * @since 8.0
+ * @author Radim Vansa
+ * @since 9.0
  */
-public class BackupAckCommand extends BaseRpcCommand {
+public class PrimaryAckCommand extends BaseRpcCommand {
 
-   public static final byte COMMAND_ID = 59;
+   public static final byte COMMAND_ID = 60;
    private CommandInvocationId commandInvocationId;
+   private Object returnValue;
+   private Throwable exception;
+   private boolean successful;
    private SequentialInterceptorChain chain;
 
-   public BackupAckCommand(String cacheName) {
+   public PrimaryAckCommand(String cacheName) {
       super(cacheName);
    }
 
@@ -32,7 +35,7 @@ public class BackupAckCommand extends BaseRpcCommand {
       if (interceptor == null) {
          return null;
       }
-      interceptor.backupAck(commandInvocationId, getOrigin());
+      interceptor.primaryAck(commandInvocationId, getOrigin(), returnValue, exception, successful);
       return null;
    }
 
@@ -49,11 +52,17 @@ public class BackupAckCommand extends BaseRpcCommand {
    @Override
    public void writeTo(ObjectOutput output) throws IOException {
       output.writeObject(commandInvocationId);
+      output.writeObject(returnValue);
+      output.writeObject(exception);
+      output.writeBoolean(successful);
    }
 
    @Override
    public void readFrom(ObjectInput input) throws IOException, ClassNotFoundException {
       commandInvocationId = (CommandInvocationId) input.readObject();
+      returnValue = input.readObject();
+      exception = (Throwable) input.readObject();
+      successful = input.readBoolean();
    }
 
    public CommandInvocationId getCommandInvocationId() {
@@ -66,5 +75,11 @@ public class BackupAckCommand extends BaseRpcCommand {
 
    public void setInterceptorChain(SequentialInterceptorChain chain) {
       this.chain = chain;
+   }
+
+   public void setResult(Object returnValue, Throwable exception, boolean successful) {
+      this.returnValue = returnValue;
+      this.exception = exception;
+      this.successful = successful;
    }
 }

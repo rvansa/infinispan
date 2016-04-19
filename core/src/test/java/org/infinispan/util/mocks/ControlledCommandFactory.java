@@ -40,17 +40,7 @@ import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
 import org.infinispan.commands.tx.VersionedCommitCommand;
 import org.infinispan.commands.tx.VersionedPrepareCommand;
-import org.infinispan.commands.write.ApplyDeltaCommand;
-import org.infinispan.commands.write.BackupAckCommand;
-import org.infinispan.commands.write.ClearCommand;
-import org.infinispan.commands.write.EvictCommand;
-import org.infinispan.commands.write.InvalidateCommand;
-import org.infinispan.commands.write.PutKeyValueCommand;
-import org.infinispan.commands.write.PutMapCommand;
-import org.infinispan.commands.write.RemoveCommand;
-import org.infinispan.commands.write.RemoveExpiredCommand;
-import org.infinispan.commands.write.ReplaceCommand;
-import org.infinispan.commands.write.WriteCommand;
+import org.infinispan.commands.write.*;
 import org.infinispan.commons.api.functional.EntryView;
 import org.infinispan.context.Flag;
 import org.infinispan.factories.ComponentRegistry;
@@ -453,5 +443,10 @@ public class ControlledCommandFactory implements CommandsFactory {
    @Override
    public BackupAckCommand buildBackupAckCommand(CommandInvocationId id) {
       return actual.buildBackupAckCommand(id);
+   }
+
+   @Override
+   public PrimaryAckCommand buildPrimaryAckCommand(CommandInvocationId id, Object returnValue, Throwable exception, boolean successful) {
+      return actual.buildPrimaryAckCommand(id, returnValue, exception, successful);
    }
 }

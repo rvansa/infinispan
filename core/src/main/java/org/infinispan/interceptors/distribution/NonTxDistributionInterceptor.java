@@ -8,6 +8,7 @@ import org.infinispan.commands.read.GetKeyValueCommand;
 import org.infinispan.commands.read.RemoteFetchingCommand;
 import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.DataWriteCommandResponse;
+import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
@@ -15,7 +16,6 @@ import org.infinispan.commands.write.ReplaceCommand;
 import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
-import org.infinispan.commons.util.Util;
 import org.infinispan.container.EntryFactory;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.container.entries.InternalCacheEntry;
@@ -27,7 +27,6 @@ import org.infinispan.distribution.util.ReadOnlySegmentAwareSet;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
-import org.infinispan.remoting.responses.ExceptionResponse;
 import org.infinispan.remoting.responses.Response;
 import org.infinispan.remoting.responses.SuccessfulResponse;
 import org.infinispan.remoting.rpc.RpcOptions;
@@ -40,7 +39,6 @@ import java.util.*;
 import java.util.Map.Entry;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
@@ -65,7 +63,7 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    private static Log log = LogFactory.getLog(NonTxDistributionInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
-   private final Map<CommandInvocationId, BackupOwnerAckCollector> collectorMap;
+   private final Map<CommandInvocationId, AckCollector> collectorMap;
    private RpcOptions asyncRpcOptions;
 
    public NonTxDistributionInterceptor() {
@@ -770,7 +768,7 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    private Object nonOwnerWrite(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners) throws Exception {
       if (context.isOriginLocal()) {
-         return localWriteInvocation(context, command, primaryOwner, owners);
+         return localWriteInvocation(context, command, primaryOwner, owners, false);
       } else {
          throw new IllegalStateException("Remote write received in a non-owner");
       }
@@ -780,20 +778,22 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       //we are the primary owner. we need to execute the command, check if successful, send to backups and reply to originator is needed.
       Object commandResult = invokeNextInterceptor(context, command);
       if (!command.isSuccessful()) {
+         PrimaryAckCommand unsuccessfulAck = cf.buildPrimaryAckCommand(command.getCommandInvocationId(), commandResult, null, false);
+         rpcManager.invokeRemotelyAsync(Collections.singletonList(context.getOrigin()), unsuccessfulAck, asyncRpcOptions);
          return new DataWriteCommandResponse(commandResult);
       }
 
-      CompletableFuture<Void> future = new CompletableFuture<>();
+      CompletableFuture<Object> future = new CompletableFuture<>();
       // all backup owners, including the originator
-      BackupOwnerAckCollector collector = new BackupOwnerAckCollector(owners, future);
-      collector.ack(rpcManager.getAddress()); // primary owner not needed!
+      AckCollector collector = new AckCollector(owners, future);
+      collector.backupAck(rpcManager.getAddress()); // primary owner not needed!
       collectorMap.put(command.getCommandInvocationId(), collector);
       // Don't forget the cleanup. To avoid leaks completely, we would need some scheduled (for nodes crash etc.)
       future.thenRun(() -> collectorMap.remove(command.getCommandInvocationId()));
 
       Set<Address> backupOwners = new HashSet<>(owners);
       // don't send the message to origin: response will tell it to execute the backup
-      backupOwners.remove(context.getOrigin());
+      boolean originIsBackup = backupOwners.remove(context.getOrigin());
       command.setValueMatcher(ValueMatcher.MATCH_ALWAYS);
       // we must send the message only after the collector is registered in the map
       rpcManager.invokeRemotelyAsync(backupOwners, command, asyncRpcOptions);
@@ -801,6 +801,12 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       DataWriteCommandResponse response = new DataWriteCommandResponse(commandResult, future);
       if (context.isOriginLocal()) {
          CompletableFutures.await(future, asyncRpcOptions.timeout(), asyncRpcOptions.timeUnit());
+      } else {
+         boolean returnValueExpected = command.isReturnValueExpected();
+         if (returnValueExpected || originIsBackup) {
+            PrimaryAckCommand primaryAck = cf.buildPrimaryAckCommand(command.getCommandInvocationId(), returnValueExpected ? commandResult : null, null, true);
+            rpcManager.invokeRemotelyAsync(Collections.singletonList(context.getOrigin()), primaryAck, asyncRpcOptions);
+         }
       }
       return response;
    }
@@ -808,7 +814,7 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
    private Object backupOwnerWrite(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners) throws Throwable {
       if (context.isOriginLocal()) {
          //we forwards to the coordinator and wait for acks
-         DataWriteCommandResponse response = localWriteInvocation(context, command, primaryOwner, owners);
+         DataWriteCommandResponse response = localWriteInvocation(context, command, primaryOwner, owners, true);
          if (response.isSuccessful()) {
             command.setValueMatcher(ValueMatcher.MATCH_ALWAYS);
             // ignore local return value
@@ -833,82 +839,88 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       }
    }
 
-   private DataWriteCommandResponse localWriteInvocation(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners) throws Exception {
+   private DataWriteCommandResponse localWriteInvocation(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners, boolean isBackup) throws Exception {
       assert context.isOriginLocal();
       try {
-         BackupOwnerAckCollector collector = new BackupOwnerAckCollector(owners, null);
-         collector.ack(primaryOwner); //primary owner not needed!
-         collector.ack(rpcManager.getAddress()); // self-ack is not needed
+         CompletableFuture<Object> future = new CompletableFuture<>();
+         AckCollector collector = new AckCollector(owners, future);
+         // Backup owner always has to wait for the reply from primary
+         if (!command.isReturnValueExpected() && !isBackup) {
+            collector.backupAck(primaryOwner); //primary owner not needed!
+         }
+         collector.backupAck(rpcManager.getAddress()); // self-ack is not needed
          collectorMap.put(command.getCommandInvocationId(), collector);
-         RpcOptions options = rpcManager.getDefaultRpcOptions(true);
-         Map<Address, Response> responseMap = rpcManager.invokeRemotely(Collections.singleton(primaryOwner), command, rpcManager.getDefaultRpcOptions(true));
-         DataWriteCommandResponse result = null;
-         if (!responseMap.isEmpty()) {
-            Response response = responseMap.get(primaryOwner);
-            if (response instanceof ExceptionResponse) {
-               throw ((ExceptionResponse) response).getException();
-            } else if (response instanceof SuccessfulResponse) {
-               result = (DataWriteCommandResponse) ((SuccessfulResponse) response).getResponseValue();
-            } else
-               throw new IllegalStateException("Unexpected response received!");
-         }
-         assert result != null;
-         if (!result.isSuccessful()) {
-            if (trace) {
-               log.tracef("Unsuccessful conditional command. Skip waiting from backup owners. CommandId=%s", command.getCommandInvocationId());
-            }
-            return result;
-         }
+         rpcManager.invokeRemotely(Collections.singleton(primaryOwner), command, asyncRpcOptions);
          if (trace) {
             log.tracef("Waiting for acks for command %s. Missing are %s", command.getCommandInvocationId(), collector.confirmationNeeded);
          }
-         collector.await(options.timeout(), options.timeUnit());
-         return result;
+         Object returnValue = future.get(asyncRpcOptions.timeout(), asyncRpcOptions.timeUnit());
+         return new DataWriteCommandResponse(returnValue, collector.isSuccessful());
       } finally {
          collectorMap.remove(command.getCommandInvocationId());
       }
    }
 
    //TODO should it be a new class?
-   private static class BackupOwnerAckCollector {
+   private static class AckCollector {
       private final Set<Address> confirmationNeeded;
-      private final CountDownLatch barrier;
-      private final CompletableFuture<Void> future;
+      private final CompletableFuture<Object> future;
+      private Object value;
+      // this says whether the backup == originator should apply the value
+      private boolean successful = true;
 
-      private BackupOwnerAckCollector(Collection<Address> confirmationNeeded, CompletableFuture<Void> future) {
+      private AckCollector(Collection<Address> confirmationNeeded, CompletableFuture<Object> future) {
          this.future = future;
          this.confirmationNeeded = ConcurrentHashMap.newKeySet();
          this.confirmationNeeded.addAll(confirmationNeeded);
-         barrier = new CountDownLatch(1);
       }
 
-      public void ack(Address from) {
+      public void backupAck(Address from) {
          confirmationNeeded.remove(from);
          if (confirmationNeeded.isEmpty()) {
             if (trace) {
                log.trace("Last ack received!");
             }
-            barrier.countDown();
-            if (future != null) {
-               future.complete(null);
+            future.complete(value);
+         }
+      }
+
+      public void primaryAck(Address from, Object returnValue, Throwable exception, boolean success) {
+         this.successful = success;
+         this.value = returnValue;
+         if (successful) {
+            backupAck(from);
+         } else {
+            if (exception != null) {
+               future.completeExceptionally(exception);
+            } else {
+               future.complete(returnValue);
             }
          }
       }
 
-      public void await(long timeout, TimeUnit timeUnit) throws InterruptedException {
-         if (!barrier.await(timeout, timeUnit)) {
-            throw log.timeoutWaitingForAcks(Util.prettyPrintTime(timeout, timeUnit), String.valueOf(confirmationNeeded));
-         }
+      public boolean isSuccessful() {
+         return successful;
       }
    }
 
-   public void ack(CommandInvocationId id, Address from) {
+   public void backupAck(CommandInvocationId id, Address from) {
       if (trace) {
-         log.tracef("Receive ack from %s for command %s.", from, id);
+         log.tracef("Receive backup ack from %s for command %s.", from, id);
       }
-      BackupOwnerAckCollector collector = collectorMap.get(id);
+      AckCollector collector = collectorMap.get(id);
       if (collector != null) {
-         collector.ack(from);
+         collector.backupAck(from);
+      }
+   }
+
+   public void primaryAck(CommandInvocationId id, Address from, Object returnValue, Throwable exception, boolean successful) {
+      if (trace) {
+         log.tracef("Receive primary ack from for command %s.", id);
+      }
+      AckCollector collector = collectorMap.get(id);
+      if (collector != null) {
+         collector.primaryAck(from, returnValue, exception, successful);
       }
    }
 }
