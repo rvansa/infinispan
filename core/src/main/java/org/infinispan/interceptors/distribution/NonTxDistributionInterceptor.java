@@ -12,6 +12,7 @@ import org.infinispan.commands.write.PutKeyValueCommand;
 import org.infinispan.commands.write.PutMapCommand;
 import org.infinispan.commands.write.RemoveCommand;
 import org.infinispan.commands.write.ReplaceCommand;
+import org.infinispan.commands.write.ValueMatcher;
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.Util;
@@ -23,6 +24,7 @@ import org.infinispan.context.InvocationContext;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.util.ReadOnlySegmentAwareMap;
 import org.infinispan.distribution.util.ReadOnlySegmentAwareSet;
+import org.infinispan.factories.annotations.Start;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
 import org.infinispan.remoting.responses.ExceptionResponse;
@@ -34,16 +36,8 @@ import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.logging.Log;
 import org.infinispan.util.logging.LogFactory;
 
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Collections;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.Iterator;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.Map.Entry;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CountDownLatch;
@@ -72,9 +66,15 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
    private static Log log = LogFactory.getLog(NonTxDistributionInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
    private final Map<CommandInvocationId, BackupOwnerAckCollector> collectorMap;
+   private RpcOptions asyncRpcOptions;
 
    public NonTxDistributionInterceptor() {
       collectorMap = new ConcurrentHashMap<>();
+   }
+
+   @Start
+   public void start() {
+      asyncRpcOptions = rpcManager.getDefaultRpcOptions(false, DeliverOrder.NONE);
    }
 
    @Override
@@ -782,11 +782,25 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
       if (!command.isSuccessful()) {
          return new DataWriteCommandResponse(commandResult);
       }
-      RpcOptions options = rpcManager.getDefaultRpcOptions(true);
-      CompletableFuture<?> backups = rpcManager.invokeRemotelyAsync(owners, command, options);
-      DataWriteCommandResponse response = new DataWriteCommandResponse(commandResult, backups);
+
+      CompletableFuture<Void> future = new CompletableFuture<>();
+      // all backup owners, including the originator
+      BackupOwnerAckCollector collector = new BackupOwnerAckCollector(owners, future);
+      collector.ack(rpcManager.getAddress()); // primary owner not needed!
+      collectorMap.put(command.getCommandInvocationId(), collector);
+      // Don't forget the cleanup. To avoid leaks completely, we would need some scheduled (for nodes crash etc.)
+      future.thenRun(() -> collectorMap.remove(command.getCommandInvocationId()));
+
+      Set<Address> backupOwners = new HashSet<>(owners);
+      // don't send the message to origin: response will tell it to execute the backup
+      backupOwners.remove(context.getOrigin());
+      command.setValueMatcher(ValueMatcher.MATCH_ALWAYS);
+      // we must send the message only after the collector is registered in the map
+      rpcManager.invokeRemotelyAsync(backupOwners, command, asyncRpcOptions);
+
+      DataWriteCommandResponse response = new DataWriteCommandResponse(commandResult, future);
       if (context.isOriginLocal()) {
-         CompletableFutures.await(backups, options.timeout(), options.timeUnit());
+         CompletableFutures.await(future, asyncRpcOptions.timeout(), asyncRpcOptions.timeUnit());
       }
       return response;
    }
@@ -794,30 +808,37 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
    private Object backupOwnerWrite(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners) throws Throwable {
       if (context.isOriginLocal()) {
          //we forwards to the coordinator and wait for acks
-         return localWriteInvocation(context, command, primaryOwner, owners);
+         DataWriteCommandResponse response = localWriteInvocation(context, command, primaryOwner, owners);
+         if (response.isSuccessful()) {
+            command.setValueMatcher(ValueMatcher.MATCH_ALWAYS);
+            // ignore local return value
+            invokeNextInterceptor(context, command);
+            response.getEntriesUpdated().thenRun(() -> {
+               // let primary know that it can unlock
+               rpcManager.invokeRemotelyAsync(Collections.singleton(primaryOwner), cf.buildBackupAckCommand(command.getCommandInvocationId()), asyncRpcOptions);
+            });
+         }
+         return response;
       } else {
          final CommandInvocationId commandInvocationId = command.getCommandInvocationId();
          final Address origin = commandInvocationId.getAddress();
-         final boolean local = origin.equals(rpcManager.getAddress());
          DataWriteCommandResponse response = new DataWriteCommandResponse(invokeNextInterceptor(context, command));
-         response.getEntriesUpdated().thenRunAsync(() -> {
-            if (local) {
-               ack(commandInvocationId, origin);
-            } else {
-               if (!origin.equals(primaryOwner)) {
-                  rpcManager.invokeRemotelyAsync(Collections.singleton(origin), cf.buildBackupAckCommand(commandInvocationId), rpcManager.getDefaultRpcOptions(false, DeliverOrder.NONE));
-               }
-            }
+         response.getEntriesUpdated().thenRun(() -> {
+            // let primary know that it can unlock
+            Collection<Address> recipients = origin.equals(primaryOwner) ?
+               Collections.singletonList(primaryOwner) : Arrays.asList(primaryOwner, origin);
+            rpcManager.invokeRemotelyAsync(recipients, cf.buildBackupAckCommand(commandInvocationId), asyncRpcOptions);
          });
          return response;
       }
    }
 
-   private Object localWriteInvocation(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners) throws Exception {
+   private DataWriteCommandResponse localWriteInvocation(InvocationContext context, DataWriteCommand command, Address primaryOwner, List<Address> owners) throws Exception {
       assert context.isOriginLocal();
       try {
-         BackupOwnerAckCollector collector = new BackupOwnerAckCollector(owners);
+         BackupOwnerAckCollector collector = new BackupOwnerAckCollector(owners, null);
          collector.ack(primaryOwner); //primary owner not needed!
+         collector.ack(rpcManager.getAddress()); // self-ack is not needed
          collectorMap.put(command.getCommandInvocationId(), collector);
          RpcOptions options = rpcManager.getDefaultRpcOptions(true);
          Map<Address, Response> responseMap = rpcManager.invokeRemotely(Collections.singleton(primaryOwner), command, rpcManager.getDefaultRpcOptions(true));
@@ -836,13 +857,13 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
             if (trace) {
                log.tracef("Unsuccessful conditional command. Skip waiting from backup owners. CommandId=%s", command.getCommandInvocationId());
             }
-            return result.getReturnValue();
+            return result;
          }
          if (trace) {
             log.tracef("Waiting for acks for command %s. Missing are %s", command.getCommandInvocationId(), collector.confirmationNeeded);
          }
          collector.await(options.timeout(), options.timeUnit());
-         return result.getReturnValue();
+         return result;
       } finally {
          collectorMap.remove(command.getCommandInvocationId());
       }
@@ -852,8 +873,10 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
    private static class BackupOwnerAckCollector {
       private final Set<Address> confirmationNeeded;
       private final CountDownLatch barrier;
+      private final CompletableFuture<Void> future;
 
-      private BackupOwnerAckCollector(Collection<Address> confirmationNeeded) {
+      private BackupOwnerAckCollector(Collection<Address> confirmationNeeded, CompletableFuture<Void> future) {
+         this.future = future;
          this.confirmationNeeded = ConcurrentHashMap.newKeySet();
          this.confirmationNeeded.addAll(confirmationNeeded);
          barrier = new CountDownLatch(1);
@@ -866,6 +889,9 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
                log.trace("Last ack received!");
             }
             barrier.countDown();
+            if (future != null) {
+               future.complete(null);
+            }
          }
       }
 
