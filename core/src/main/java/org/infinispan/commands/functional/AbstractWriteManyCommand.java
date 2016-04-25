@@ -5,13 +5,12 @@ import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.commons.util.EnumUtil;
 import org.infinispan.context.Flag;
 import org.infinispan.context.InvocationContext;
-import org.infinispan.functional.impl.FunctionalNotifier;
 import org.infinispan.functional.impl.Params;
 import org.infinispan.metadata.Metadata;
 
 import java.util.Set;
 
-abstract class AbstractWriteManyCommand<K, V> implements WriteCommand, ParamsCommand {
+abstract class AbstractWriteManyCommand<K, V> implements WriteCommand, ManyDataCommand<K>, ParamsCommand {
 
    boolean isForwarded = false;
    int topologyId = -1;

@@ -3,10 +3,14 @@ package org.infinispan.interceptors;
 import org.infinispan.atomic.impl.AtomicHashMap;
 import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.FlagAffectedCommand;
+import org.infinispan.commands.functional.ManyDataCommand;
 import org.infinispan.commands.functional.ParamsCommand;
 import org.infinispan.commands.functional.ReadWriteKeyCommand;
 import org.infinispan.commands.functional.ReadWriteKeyValueCommand;
+import org.infinispan.commands.functional.ReadWriteManyCommand;
+import org.infinispan.commands.functional.ReadWriteManyEntriesCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyCommand;
+import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
@@ -48,6 +52,7 @@ import javax.transaction.TransactionManager;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import static org.infinispan.factories.KnownComponentNames.CACHE_MARSHALLER;
@@ -251,16 +256,34 @@ public class CacheWriterInterceptor extends JmxStatsCommandInterceptor {
    }
 
    @Override
+   public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) throws Throwable {
+      return visitWriteManyCommand(ctx, command);
+   }
+
+   @Override
    public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+      return visitWriteManyCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+      return visitWriteManyCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+      return visitWriteManyCommand(ctx, command);
+   }
+
+   public <T extends WriteCommand & ManyDataCommand & ParamsCommand> Object visitWriteManyCommand(InvocationContext ctx, T command) throws Throwable {
       Object returnValue = invokeNextInterceptor(ctx, command);
       if (!isStoreEnabled(command) || ctx.isInTxScope()) return returnValue;
 
       Param<PersistenceMode> persistMode = command.getParams().get(PersistenceMode.ID);
       switch (persistMode.get()) {
          case PERSIST:
-            Map<Object, Object> map = command.getEntries();
             int storedCount = 0;
-            for (Object key : map.keySet()) {
+            for (Object key : command.getKeys()) {
                CacheEntry entry = ctx.lookupEntry(key);
                if (entry != null) {
                   if (entry.isRemoved()) {

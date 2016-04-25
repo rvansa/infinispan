@@ -44,6 +44,29 @@ public interface Param<P> {
    P get();
 
    /**
+    * Should this paramater go over the wire?
+    */
+   SerializeMethod serializeMethod();
+
+   /**
+    * The way how this object should be serialized;
+    */
+   enum SerializeMethod {
+      /**
+       * Don't send this param over the wire.
+       */
+      NEVER,
+      /**
+       * Use {@link Enum#ordinal()} as the only identifier
+       */
+      ORDINAL,
+      /**
+       * Serialize as regular object.
+       */
+      OBJECT
+   }
+
+   /**
     * When a method defines {@link CompletableFuture} as a return type, it
     * implies the method called will be called asynchronously and that the
     * {@link CompletableFuture} returned will be completed once the method's
@@ -79,6 +102,11 @@ public interface Param<P> {
       @Override
       public FutureMode get() {
          return this;
+      }
+
+      @Override
+      public SerializeMethod serializeMethod() {
+         return SerializeMethod.NEVER;
       }
 
       /**
@@ -120,6 +148,11 @@ public interface Param<P> {
       @Override
       public PersistenceMode get() {
          return this;
+      }
+
+      @Override
+      public SerializeMethod serializeMethod() {
+         return SerializeMethod.ORDINAL;
       }
 
       /**
