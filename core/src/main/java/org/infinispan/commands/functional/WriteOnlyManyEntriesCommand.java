@@ -1,6 +1,7 @@
 package org.infinispan.commands.functional;
 
 import org.infinispan.commands.Visitor;
+import org.infinispan.commons.api.functional.EntryView;
 import org.infinispan.commons.api.functional.EntryView.WriteEntryView;
 import org.infinispan.container.entries.CacheEntry;
 import org.infinispan.context.InvocationContext;
@@ -35,6 +36,10 @@ public final class WriteOnlyManyEntriesCommand<K, V> extends AbstractWriteManyCo
    }
 
    public WriteOnlyManyEntriesCommand() {
+   }
+
+   public BiConsumer<V, WriteEntryView<V>> getFunction() {
+      return f;
    }
 
    public Map<? extends K, ? extends V> getEntries() {
@@ -91,7 +96,7 @@ public final class WriteOnlyManyEntriesCommand<K, V> extends AbstractWriteManyCo
 
    @Override
    public Set<Object> getAffectedKeys() {
-      return null;  // TODO: Customise this generated block
+      return (Set<Object>) getKeys();
    }
 
    @Override

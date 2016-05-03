@@ -149,7 +149,7 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
 
    @Override
    public Set<Object> getAffectedKeys() {
-      return null;  // TODO: Customise this generated block
+      return (Set<Object>) getKeys();
    }
 
    @Override
@@ -170,5 +170,9 @@ public final class ReadWriteManyCommand<K, V, R> extends AbstractWriteManyComman
    @Override
    public boolean alwaysReadsExistingValues() {
       return false;
+   }
+
+   public Function<ReadWriteEntryView<K, V>, R> getFunction() {
+      return f;
    }
 }

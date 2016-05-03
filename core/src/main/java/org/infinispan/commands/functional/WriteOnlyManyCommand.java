@@ -40,6 +40,10 @@ public final class WriteOnlyManyCommand<K, V> extends AbstractWriteManyCommand<K
    public WriteOnlyManyCommand() {
    }
 
+   public Consumer<WriteEntryView<V>> getFunction() {
+      return f;
+   }
+
    @Override
    public Set<? extends K> getKeys() {
       return keys;
@@ -108,7 +112,7 @@ public final class WriteOnlyManyCommand<K, V> extends AbstractWriteManyCommand<K
 
    @Override
    public Set<Object> getAffectedKeys() {
-      return null;  // TODO: Customise this generated block
+      return (Set<Object>) getKeys();
    }
 
    @Override
@@ -135,5 +139,4 @@ public final class WriteOnlyManyCommand<K, V> extends AbstractWriteManyCommand<K
    public boolean isWriteOnly() {
       return true;
    }
-
 }

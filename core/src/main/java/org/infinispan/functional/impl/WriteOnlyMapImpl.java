@@ -52,9 +52,7 @@ public final class WriteOnlyMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
       log.tracef("Invoked eval(k=%s, %s)", key, params);
       Param<FutureMode> futureMode = params.get(FutureMode.ID);
       WriteOnlyKeyCommand cmd = fmap.cmdFactory().buildWriteOnlyKeyCommand(key, f, params);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(true, 1);
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return futureVoid(futureMode, ctx, cmd);
+      return invokeWithImplicitTransaction(cmd, futureMode, 1, true);
    }
 
    @Override
@@ -62,9 +60,7 @@ public final class WriteOnlyMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
       log.tracef("Invoked eval(k=%s, v=%s, %s)", key, value, params);
       Param<FutureMode> futureMode = params.get(FutureMode.ID);
       WriteOnlyKeyValueCommand cmd = fmap.cmdFactory().buildWriteOnlyKeyValueCommand(key, value, f, params);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(true, 1);
-      ctx.setLockOwner(cmd.getKeyLockOwner());
-      return futureVoid(futureMode, ctx, cmd);
+      return invokeWithImplicitTransaction(cmd, futureMode, 1, true);
    }
 
    @Override
@@ -72,8 +68,7 @@ public final class WriteOnlyMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
       log.tracef("Invoked evalMany(entries=%s, %s)", entries, params);
       Param<FutureMode> futureMode = params.get(FutureMode.ID);
       WriteOnlyManyEntriesCommand cmd = fmap.cmdFactory().buildWriteOnlyManyEntriesCommand(entries, f, params);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(true, entries.size());
-      return futureVoid(futureMode, ctx, cmd);
+      return invokeWithImplicitTransaction(cmd, futureMode, entries.size(), true);
    }
 
    @Override
@@ -81,8 +76,7 @@ public final class WriteOnlyMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
       log.tracef("Invoked evalMany(keys=%s, %s)", keys, params);
       Param<FutureMode> futureMode = params.get(FutureMode.ID);
       WriteOnlyManyCommand cmd = fmap.cmdFactory().buildWriteOnlyManyCommand(keys, f, params);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(true, keys.size());
-      return futureVoid(futureMode, ctx, cmd);
+      return invokeWithImplicitTransaction(cmd, futureMode, keys.size(), true);
    }
 
    @Override
@@ -91,8 +85,7 @@ public final class WriteOnlyMapImpl<K, V> extends AbstractFunctionalMap<K, V> im
       Param<FutureMode> futureMode = params.get(FutureMode.ID);
       CloseableIteratorSet<K> keys = fmap.cache.keySet();
       WriteOnlyManyCommand cmd = fmap.cmdFactory().buildWriteOnlyManyCommand(keys, f, params);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(true, keys.size());
-      return futureVoid(futureMode, ctx, cmd);
+      return invokeWithImplicitTransaction(cmd, futureMode, keys.size(), true);
    }
 
    @Override

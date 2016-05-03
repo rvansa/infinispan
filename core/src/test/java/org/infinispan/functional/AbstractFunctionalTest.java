@@ -5,6 +5,7 @@ import org.infinispan.configuration.cache.ConfigurationBuilder;
 import org.infinispan.functional.impl.FunctionalMapImpl;
 import org.infinispan.persistence.dummy.DummyInMemoryStoreConfigurationBuilder;
 import org.infinispan.test.MultipleCacheManagersTest;
+import org.infinispan.transaction.TransactionMode;
 import org.testng.annotations.BeforeClass;
 
 import java.util.Random;
@@ -27,17 +28,20 @@ abstract class AbstractFunctionalTest extends MultipleCacheManagersTest {
    protected void createCacheManagers() throws Throwable {
       // Create local caches as default in a cluster of 2
       ConfigurationBuilder localBuilder = new ConfigurationBuilder();
-      localBuilder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
+//      localBuilder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
+      localBuilder.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
       createClusteredCaches(2, localBuilder);
       // Create distributed caches
       ConfigurationBuilder distBuilder = new ConfigurationBuilder();
       distBuilder.clustering().cacheMode(CacheMode.DIST_SYNC).hash().numOwners(1);
-      distBuilder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
+//      distBuilder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
+      distBuilder.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
       cacheManagers.stream().forEach(cm -> cm.defineConfiguration(DIST, distBuilder.build()));
       // Create replicated caches
       ConfigurationBuilder replBuilder = new ConfigurationBuilder();
       replBuilder.clustering().cacheMode(CacheMode.REPL_SYNC);
-      replBuilder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
+//      replBuilder.persistence().addStore(DummyInMemoryStoreConfigurationBuilder.class);
+      replBuilder.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
       cacheManagers.stream().forEach(cm -> cm.defineConfiguration(REPL, replBuilder.build()));
       // Wait for cluster to form
       waitForClusterToForm(DIST, REPL);

@@ -52,16 +52,14 @@ public final class ReadOnlyMapImpl<K, V> extends AbstractFunctionalMap<K, V> imp
       log.tracef("Invoked eval(k=%s, %s)", key, params);
       Param<FutureMode> futureMode = params.get(FutureMode.ID);
       ReadOnlyKeyCommand cmd = fmap.cmdFactory().buildReadOnlyKeyCommand(key, f);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(false, 1);
-      return withFuture(futureMode, fmap.asyncExec(), () -> (R) fmap.chain().invoke(ctx, cmd));
+      return invokeWithImplicitTransaction(cmd, futureMode, 1, false);
    }
 
    @Override
    public <R> Traversable<R> evalMany(Set<? extends K> keys, Function<ReadEntryView<K, V>, R> f) {
       log.tracef("Invoked evalMany(m=%s, %s)", keys, params);
       ReadOnlyManyCommand<K, V, R> cmd = fmap.cmdFactory().buildReadOnlyManyCommand(keys, f);
-      InvocationContext ctx = fmap.invCtxFactory().createInvocationContext(false, keys.size());
-      return Traversables.of((Stream<R>) fmap.chain().invoke(ctx, cmd));
+      return invokeWithImplicitTransaction(cmd, keys.size());
    }
 
    @Override

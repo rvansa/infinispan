@@ -142,7 +142,7 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
 
    @Override
    public Set<Object> getAffectedKeys() {
-      return null;  // TODO: Customise this generated block
+      return (Set<Object>) getKeys();
    }
 
    @Override
@@ -170,7 +170,11 @@ public final class ReadWriteManyEntriesCommand<K, V, R> extends AbstractWriteMan
    }
 
    @Override
-   public Set getKeys() {
+   public Set<? extends K> getKeys() {
       return entries.keySet();
+   }
+
+   public BiFunction<V, ReadWriteEntryView<K, V>, R> getFunction() {
+      return f;
    }
 }

@@ -2,6 +2,7 @@ package org.infinispan.interceptors.distribution;
 
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.functional.*;
 import org.infinispan.commands.read.AbstractDataCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
@@ -81,26 +82,12 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
 
    @Override
    public Object visitReplaceCommand(InvocationContext ctx, ReplaceCommand command) throws Throwable {
-      try {
-         return handleTxWriteCommand(ctx, command, command.getKey());
-      } finally {
-         if (ctx.isOriginLocal()) {
-            // If the state transfer interceptor has to retry the command, it should ignore the previous value.
-            command.setValueMatcher(command.isSuccessful() ? ValueMatcher.MATCH_ALWAYS : ValueMatcher.MATCH_NEVER);
-         }
-      }
+      return handleTxWriteCommand(ctx, command, command.getKey());
    }
 
    @Override
    public Object visitRemoveCommand(InvocationContext ctx, RemoveCommand command) throws Throwable {
-      try {
-         return handleTxWriteCommand(ctx, command, command.getKey());
-      } finally {
-         if (ctx.isOriginLocal()) {
-            // If the state transfer interceptor has to retry the command, it should ignore the previous value.
-            command.setValueMatcher(command.isSuccessful() ? ValueMatcher.MATCH_ALWAYS : ValueMatcher.MATCH_NEVER);
-         }
-      }
+      return handleTxWriteCommand(ctx, command, command.getKey());
    }
 
    @Override
@@ -109,12 +96,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
          return handleNonTxWriteCommand(ctx, command);
       }
 
-      Object returnValue = handleTxWriteCommand(ctx, command, command.getKey());
-      if (ctx.isOriginLocal()) {
-         // If the state transfer interceptor has to retry the command, it should ignore the previous value.
-         command.setValueMatcher(command.isSuccessful() ? ValueMatcher.MATCH_ALWAYS : ValueMatcher.MATCH_NEVER);
-      }
-      return returnValue;
+      return handleTxWriteCommand(ctx, command, command.getKey());
    }
 
    @Override
@@ -212,6 +194,59 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       return invokeNextInterceptor(ctx, command);
    }
 
+   @Override
+   public Object visitReadOnlyKeyCommand(InvocationContext ctx, ReadOnlyKeyCommand command) throws Throwable {
+      return visitGetCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitReadOnlyManyCommand(InvocationContext ctx, ReadOnlyManyCommand command) throws Throwable {
+      // TODO
+      return super.visitReadOnlyManyCommand(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) throws Throwable {
+      return handleTxWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) throws Throwable {
+      return handleTxWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
+      return handleTxWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+      return invokeNextInterceptor(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) throws Throwable {
+      return handleTxWriteCommand(ctx, command, command.getKey());
+   }
+
+   @Override
+   public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) throws Throwable {
+      return invokeNextInterceptor(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+      // TODO
+      return super.visitReadWriteManyCommand(ctx, command);    // TODO: Customise this generated block
+   }
+
+   @Override
+   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+      // TODO
+      return super.visitReadWriteManyEntriesCommand(ctx, command);    // TODO: Customise this generated block
+   }
+
    private Collection<Address> getCommitNodes(TxInvocationContext ctx) {
       LocalTransaction localTx = (LocalTransaction) ctx.getCacheTransaction();
       Collection<Address> affectedNodes = cdl.getOwners(getAffectedKeysFromContext(ctx));
@@ -278,10 +313,17 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
     * time. If the operation didn't originate locally we won't do any replication either.
     */
    private Object handleTxWriteCommand(InvocationContext ctx, WriteCommand command, Object key) throws Throwable {
-      // see if we need to load values from remote sources first
-      remoteGetBeforeWrite(ctx, command, key);
+      try {
+         // see if we need to load values from remote sources first
+         remoteGetBeforeWrite(ctx, command, key);
+         return invokeNextInterceptor(ctx, command);
+      } finally {
+         if (ctx.isOriginLocal()) {
+            // If the state transfer interceptor has to retry the command, it should ignore the previous value.
+            command.setValueMatcher(command.isSuccessful() ? ValueMatcher.MATCH_ALWAYS : ValueMatcher.MATCH_NEVER);
+         }
+      }
 
-      return invokeNextInterceptor(ctx, command);
    }
 
    @Override

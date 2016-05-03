@@ -5,6 +5,7 @@ import org.infinispan.CacheSet;
 import org.infinispan.commands.CommandsFactory;
 import org.infinispan.commands.VisitableCommand;
 import org.infinispan.commands.control.LockControlCommand;
+import org.infinispan.commands.functional.*;
 import org.infinispan.commands.read.EntrySetCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
@@ -334,6 +335,56 @@ public class TxInterceptor<K, V> extends CommandInterceptor implements JmxStatis
    @Override
    public Object visitGetAllCommand(InvocationContext ctx, GetAllCommand command) throws Throwable {
       return enlistReadAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitReadOnlyKeyCommand(InvocationContext ctx, ReadOnlyKeyCommand command) throws Throwable {
+      return enlistReadAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitReadOnlyManyCommand(InvocationContext ctx, ReadOnlyManyCommand command) throws Throwable {
+      return enlistReadAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
+   }
+
+   @Override
+   public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+      return enlistWriteAndInvokeNext(ctx, command);
    }
 
    private Object enlistReadAndInvokeNext(InvocationContext ctx, VisitableCommand command) throws Throwable {

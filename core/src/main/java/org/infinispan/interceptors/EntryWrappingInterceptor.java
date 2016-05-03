@@ -4,6 +4,7 @@ import static org.infinispan.commons.util.Util.toStr;
 
 import java.util.EnumSet;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.Map;
 import java.util.Set;
@@ -21,6 +22,7 @@ import org.infinispan.commands.remote.GetKeysInGroupCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.write.*;
+import org.infinispan.commons.util.CollectionFactory;
 import org.infinispan.container.DataContainer;
 import org.infinispan.container.EntryFactory;
 import org.infinispan.container.entries.CacheEntry;
@@ -638,6 +640,104 @@ public class EntryWrappingInterceptor extends CommandInterceptor {
             EntryFactory.Wrap wrap = forceWrap ? EntryFactory.Wrap.WRAP_ALL : EntryFactory.Wrap.WRAP_NON_NULL;
             entryFactory.wrapEntryForWriting(ctx, command.getKey(), wrap, false, false);
             invokeNextInterceptor(ctx, command);
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitWriteOnlyKeyCommand(InvocationContext ctx, WriteOnlyKeyCommand command) throws Throwable {
+         if (cdl.localNodeIsOwner(command.getKey())) {
+            entryFactory.wrapEntryForWriting(ctx, command.getKey(), EntryFactory.Wrap.WRAP_ALL, false, false);
+            invokeNextInterceptor(ctx, command);
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitReadWriteKeyValueCommand(InvocationContext ctx, ReadWriteKeyValueCommand command) throws Throwable {
+         if (cdl.localNodeIsOwner(command.getKey())) {
+            entryFactory.wrapEntryForWriting(ctx, command.getKey(), EntryFactory.Wrap.WRAP_ALL, false, false);
+            invokeNextInterceptor(ctx, command);
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitReadWriteKeyCommand(InvocationContext ctx, ReadWriteKeyCommand command) throws Throwable {
+         if (cdl.localNodeIsOwner(command.getKey())) {
+            entryFactory.wrapEntryForWriting(ctx, command.getKey(), EntryFactory.Wrap.WRAP_ALL, false, false);
+            invokeNextInterceptor(ctx, command);
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitWriteOnlyManyEntriesCommand(InvocationContext ctx, WriteOnlyManyEntriesCommand command) throws Throwable {
+         Map<Object, Object> newMap = new HashMap<>(4);
+         for (Object e : command.getEntries().entrySet()) {
+            Map.Entry entry = (Map.Entry) e;
+            if (cdl.localNodeIsOwner(entry.getKey())) {
+               entryFactory.wrapEntryForWriting(ctx, entry.getKey(), EntryFactory.Wrap.WRAP_ALL, false, false);
+               newMap.put(entry.getKey(), entry.getValue());
+            }
+         }
+         if (newMap.size() > 0) {
+            invokeNextInterceptor(ctx, commandFactory.buildWriteOnlyManyEntriesCommand(newMap, command.getFunction(), command.getParams()));
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitWriteOnlyManyCommand(InvocationContext ctx, WriteOnlyManyCommand command) throws Throwable {
+         Set<Object> newKeys = new HashSet<>(4);
+         for (Object key : command.getKeys()) {
+            if (cdl.localNodeIsOwner(key)) {
+               entryFactory.wrapEntryForWriting(ctx, key, EntryFactory.Wrap.WRAP_ALL, false, false);
+               newKeys.add(key);
+            }
+         }
+         if (newKeys.size() > 0) {
+            invokeNextInterceptor(ctx, commandFactory.buildWriteOnlyManyCommand(newKeys, command.getFunction(), command.getParams()));
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitWriteOnlyKeyValueCommand(InvocationContext ctx, WriteOnlyKeyValueCommand command) throws Throwable {
+         if (cdl.localNodeIsOwner(command.getKey())) {
+            entryFactory.wrapEntryForWriting(ctx, command.getKey(), EntryFactory.Wrap.WRAP_ALL, false, false);
+            invokeNextInterceptor(ctx, command);
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitReadWriteManyCommand(InvocationContext ctx, ReadWriteManyCommand command) throws Throwable {
+         Set<Object> newKeys = new HashSet<>(4);
+         for (Object key : command.getKeys()) {
+            if (cdl.localNodeIsOwner(key)) {
+               entryFactory.wrapEntryForWriting(ctx, key, EntryFactory.Wrap.WRAP_ALL, false, false);
+               newKeys.add(key);
+            }
+         }
+         if (newKeys.size() > 0) {
+            invokeNextInterceptor(ctx, commandFactory.buildReadWriteManyCommand(newKeys, command.getFunction(), command.getParams()));
+         }
+         return null;
+      }
+
+      @Override
+      public Object visitReadWriteManyEntriesCommand(InvocationContext ctx, ReadWriteManyEntriesCommand command) throws Throwable {
+         Map<Object, Object> newMap = new HashMap<>(4);
+         for (Object e : command.getEntries().entrySet()) {
+            Map.Entry entry = (Map.Entry) e;
+            if (cdl.localNodeIsOwner(entry.getKey())) {
+               entryFactory.wrapEntryForWriting(ctx, entry.getKey(), EntryFactory.Wrap.WRAP_ALL, false, false);
+               newMap.put(entry.getKey(), entry.getValue());
+            }
+         }
+         if (newMap.size() > 0) {
+            invokeNextInterceptor(ctx, commandFactory.buildReadWriteManyEntriesCommand(newMap, command.getFunction(), command.getParams()));
          }
          return null;
       }
