@@ -58,11 +58,12 @@ public class TcpTransport implements Transport {
    private static final byte ASYNC_MSG = 3;
    private static final long STAGGER_DELAY_NANOS = TimeUnit.MILLISECONDS.toNanos(
       Integer.getInteger("infinispan.stagger.delay", 5));
-
-   private final static int portOffset = Integer.getInteger("infinispan.tcptransport.portOffset", 10000);
+   private static final boolean FAST_RESPONSE_HANDLE = Boolean.getBoolean("infinispan.tcptransport.fastresponse");
+   private static final int PORT_OFFSET = Integer.getInteger("infinispan.tcptransport.portOffset", 10000);
    private static final Log log = LogFactory.getLog(TcpTransport.class);
    private static final boolean trace = log.isTraceEnabled();
    private static final int REQUEST_ID_OFFSET = Integer.BYTES + Byte.BYTES;
+
    private final JGroupsTransport jgroups = new JGroupsTransport();
    private StreamingMarshaller marshaller;
    private InboundInvocationHandler globalHandler;
@@ -117,12 +118,13 @@ public class TcpTransport implements Transport {
       org.infinispan.commons.io.ByteBuffer buf = marshaller.objectToBuffer(rpcCommand);
       Address singleRecipient = null;
       Address[] actualRecipients = null;
-      CompletableFuture<Response> singleFuture = null;
-      CompletableFuture<Response>[] futures;
+      LazyCompletableFuture<Response> singleFuture = null;
+      LazyCompletableFuture<Response>[] futures;
+      RelayingCompletableFuture<Map<Address, Response>> aggregateFuture = null;
       if (mode == ResponseMode.ASYNCHRONOUS) {
          futures = null;
       } else if (broadcast || recipients.size() != 1) {
-         futures = new CompletableFuture[recipients.size() + 1];
+         futures = new LazyCompletableFuture[recipients.size() + 1];
          actualRecipients = new Address[recipients.size() + 1];
       } else {
          futures = null;
@@ -131,16 +133,19 @@ public class TcpTransport implements Transport {
       long deadline = timeService.expectedEndTime(timeout, TimeUnit.MILLISECONDS);
       for (Iterator<Address> iterator = recipients.stream().filter(a -> !a.equals(getAddress())).iterator(); iterator.hasNext(); ) {
          Address a = iterator.next();
-         CompletableFuture<Response> responseFuture = null;
+         LazyCompletableFuture<Response> responseFuture = null;
          if (mode != ResponseMode.ASYNCHRONOUS) {
-            responseFuture = new CompletableFuture<>();
             if (futures != null) {
+               if (aggregateFuture == null) {
+                  aggregateFuture = new RelayingCompletableFuture<>(futures.length);
+               }
+               responseFuture = new LazyCompletableFuture<>(aggregateFuture);
                int index = futureIndex++;
                futures[index] = responseFuture;
                actualRecipients[index] = a;
             } else {
                singleRecipient = a;
-               singleFuture = responseFuture;
+               singleFuture = responseFuture = new LazyCompletableFuture<>();
             }
          }
          if (mode == ResponseMode.WAIT_FOR_VALID_RESPONSE) {
@@ -160,7 +165,10 @@ public class TcpTransport implements Transport {
             getExecutor().execute(() -> globalHandler.handleFromCluster(getAddress(), rpcCommand, reply -> {}, DeliverOrder.NONE));
          } else {
             int index = futureIndex++;
-            CompletableFuture<Response> future = new CompletableFuture<>();
+            if (aggregateFuture == null) {
+               aggregateFuture = new RelayingCompletableFuture<>(futures.length);
+            }
+            LazyCompletableFuture<Response> future = new LazyCompletableFuture<>(aggregateFuture);
             getExecutor().execute(() -> globalHandler.handleFromCluster(getAddress(), rpcCommand, reply -> {
                if (reply instanceof Response) {
                   future.complete((Response) reply);
@@ -183,20 +191,89 @@ public class TcpTransport implements Transport {
             if (singleFuture != null) {
                return handleSingleRecipient(singleRecipient, singleFuture, responseFilter);
             } else {
-               return handleAllRecipients(actualRecipients, futures, futureIndex, responseFilter);
+               return handleAllRecipients(actualRecipients, aggregateFuture, futures, futureIndex, responseFilter);
             }
          case WAIT_FOR_VALID_RESPONSE:
             if (singleFuture != null) {
                return handleSingleRecipient(singleRecipient, singleFuture, responseFilter);
             } else {
-               return handleFirstRecipient(actualRecipients, futures, futureIndex, responseFilter);
+               return handleFirstRecipient(actualRecipients, aggregateFuture, futures, futureIndex, responseFilter);
             }
          default:
             throw new IllegalArgumentException();
       }
    }
 
-   private boolean staggered(org.infinispan.commons.io.ByteBuffer buf, CompletableFuture<Response>[] futures, Address[] recipients, int index, long deadline) {
+   @Override
+   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder, boolean anycast) throws Exception {
+      return jgroups.invokeRemotely(rpcCommands, mode, timeout, usePriorityQueue, responseFilter, totalOrder, anycast);
+   }
+
+   @Override
+   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode, long timeout, ResponseFilter responseFilter, DeliverOrder deliverOrder, boolean anycast) throws Exception {
+      if (rpcCommands == null || rpcCommands.isEmpty()) {
+         return Collections.emptyMap();
+      }
+      if (deliverOrder != DeliverOrder.NONE) {
+         return jgroups.invokeRemotely(rpcCommands, mode, timeout, responseFilter, deliverOrder, anycast);
+      }
+      if (trace) {
+         log.tracef("Invoking %s, mode %s, filter %s", rpcCommands, mode, responseFilter);
+      }
+      Address singleRecipient = null;
+      Address[] actualRecipients = null;
+      CompletableFuture<Response> singleFuture = null;
+      CompletableFuture<Response>[] futures;
+      RelayingCompletableFuture<Map<Address, Response>> aggregateFuture = null;
+      if (mode == ResponseMode.ASYNCHRONOUS) {
+         futures = null;
+      } else if (rpcCommands.size() != 1) {
+         futures = new CompletableFuture[rpcCommands.size()];
+         actualRecipients = new Address[rpcCommands.size()];
+      } else {
+         futures = null;
+      }
+      int futureIndex = 0;
+
+      long deadline = timeService.expectedEndTime(timeout, TimeUnit.MILLISECONDS);
+      for (Map.Entry<Address, ReplicableCommand> entry : rpcCommands.entrySet()) {
+         if (entry.getKey().equals(getAddress())) continue;
+         LazyCompletableFuture<Response> responseFuture = null;
+         org.infinispan.commons.io.ByteBuffer buf = marshaller.objectToBuffer(entry.getValue());
+         if (mode != ResponseMode.ASYNCHRONOUS) {
+            if (futures != null) {
+               if (aggregateFuture == null) {
+                  aggregateFuture = new RelayingCompletableFuture<>(futures.length);
+               }
+               int index = futureIndex++;
+               futures[index] = responseFuture = new LazyCompletableFuture<>(aggregateFuture);
+               actualRecipients[index] = entry.getKey();
+            } else {
+               singleRecipient = entry.getKey();
+               singleFuture = responseFuture = new LazyCompletableFuture<>();
+            }
+         }
+         Connection connection = getConnection(entry.getKey());
+         writeAndRecordRequest(connection, buf, responseFuture, deadline, true);
+      }
+      switch (mode) {
+         case ASYNCHRONOUS:
+            return Collections.emptyMap();
+         case SYNCHRONOUS:
+         case SYNCHRONOUS_IGNORE_LEAVERS:
+            // even with wait for valid response we wait for all targets
+         case WAIT_FOR_VALID_RESPONSE:
+            if (singleFuture != null) {
+               return handleSingleRecipient(singleRecipient, singleFuture, responseFilter).get();
+            } else {
+               return handleAllRecipients(actualRecipients, aggregateFuture, futures, futureIndex, responseFilter).get();
+            }
+         default:
+            throw new IllegalArgumentException();
+      }
+   }
+
+   private boolean staggered(org.infinispan.commons.io.ByteBuffer buf, LazyCompletableFuture<Response>[] futures, Address[] recipients, int index, long deadline) {
       assert index > 0;
       if (index >= futures.length || futures[index] == null) {
          return false;
@@ -226,7 +303,7 @@ public class TcpTransport implements Transport {
       return true;
    }
 
-   public void writeAndRecordRequest(Connection connection, org.infinispan.commons.io.ByteBuffer buf, CompletableFuture<Response> responseFuture, long deadline, boolean hasDeadline) throws IOException {
+   public void writeAndRecordRequest(Connection connection, org.infinispan.commons.io.ByteBuffer buf, LazyCompletableFuture<Response> responseFuture, long deadline, boolean hasDeadline) throws IOException {
       if (trace) {
          log.tracef("%s sending request(%s) %d bytes to %s = %08x", getAddress(), responseFuture != null ? "sync" : "async", buf.getLength(), connection.channel, System.identityHashCode(connection.channel));
       }
@@ -317,18 +394,14 @@ public class TcpTransport implements Transport {
       }
    }
 
-   public CompletableFuture<Map<Address, Response>> handleFirstRecipient(Address[] recipients, CompletableFuture<Response>[] futures, int targets, ResponseFilter responseFilter) {
-      CompletableFuture<Map<Address, Response>> mapFuture = new CompletableFuture<>();
+   public CompletableFuture<Map<Address, Response>> handleFirstRecipient(Address[] recipients, RelayingCompletableFuture<Map<Address, Response>> aggregateFuture, CompletableFuture<Response>[] futures, int targets, ResponseFilter responseFilter) {
       AtomicInteger missingResponses = new AtomicInteger(targets);
       for (int i = 0; i < targets; ++i) {
          final Address recipient = recipients[i];
          futures[i].whenComplete((response, throwable) -> {
-            if (trace) {
-               log.tracef("1 Got response %s for %08x", response, System.identityHashCode(mapFuture));
-            }
             // the filter and map can be shared among threads but are unsafe
             if (throwable != null) {
-               mapFuture.completeExceptionally(throwable);
+               aggregateFuture.completeExceptionally(throwable);
             } else {
                if (responseFilter != null) {
                   Map<Address, Response> map = null;
@@ -340,31 +413,27 @@ public class TcpTransport implements Transport {
                      }
                   }
                   if (map != null) {
-                     mapFuture.complete(map);
+                     aggregateFuture.complete(map);
                   } else if (missingResponses.decrementAndGet() == 0) {
-                     mapFuture.complete(Collections.emptyMap());
+                     aggregateFuture.complete(Collections.emptyMap());
                   }
                } else {
-                  mapFuture.complete(Collections.singletonMap(recipient, response));
+                  aggregateFuture.complete(Collections.singletonMap(recipient, response));
                }
             }
          });
       }
-      return mapFuture;
+      return aggregateFuture;
    }
 
-   public CompletableFuture<Map<Address, Response>> handleAllRecipients(Address[] recipients, CompletableFuture<Response>[] futures, int targets, ResponseFilter responseFilter) {
-      CompletableFuture<Map<Address, Response>> mapFuture = new CompletableFuture<>();
+   public CompletableFuture<Map<Address, Response>> handleAllRecipients(Address[] recipients, RelayingCompletableFuture<Map<Address, Response>> aggregateFuture, CompletableFuture<Response>[] futures, int targets, ResponseFilter responseFilter) {
       ResponseMap map = new ResponseMap(targets);
       for (int i = 0; i < targets; ++i) {
          final Address recipient = recipients[i];
          futures[i].whenComplete((response, throwable) -> {
-            if (trace) {
-               log.tracef("2 Got response %s for %08x", response, System.identityHashCode(mapFuture));
-            }
             // the filter and map can be shared among threads but are unsafe
             if (throwable != null) {
-               mapFuture.completeExceptionally(throwable);
+               aggregateFuture.completeExceptionally(throwable);
             } else {
                boolean complete;
                synchronized (map) {
@@ -385,12 +454,12 @@ public class TcpTransport implements Transport {
                // the completion is synchronous, so move it out of the synchronized block
                // we have to use separate local variable (cannot just read isDone())
                if (complete) {
-                  mapFuture.complete(map);
+                  aggregateFuture.complete(map);
                }
             }
          });
       }
-      return mapFuture;
+      return aggregateFuture;
    }
 
    public CompletableFuture<Map<Address, Response>> handleSingleRecipient(Address recipient, CompletableFuture<Response> future, ResponseFilter responseFilter) {
@@ -408,72 +477,6 @@ public class TcpTransport implements Transport {
 
    public ByteBuffer toNioByteBuffer(org.infinispan.commons.io.ByteBuffer byteBuffer) {
       return ByteBuffer.wrap(byteBuffer.getBuf(), byteBuffer.getOffset(), byteBuffer.getLength());
-   }
-
-   @Override
-   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode, long timeout, boolean usePriorityQueue, ResponseFilter responseFilter, boolean totalOrder, boolean anycast) throws Exception {
-      return jgroups.invokeRemotely(rpcCommands, mode, timeout, usePriorityQueue, responseFilter, totalOrder, anycast);
-   }
-
-   @Override
-   public Map<Address, Response> invokeRemotely(Map<Address, ReplicableCommand> rpcCommands, ResponseMode mode, long timeout, ResponseFilter responseFilter, DeliverOrder deliverOrder, boolean anycast) throws Exception {
-      if (rpcCommands == null || rpcCommands.isEmpty()) {
-         return Collections.emptyMap();
-      }
-      if (deliverOrder != DeliverOrder.NONE) {
-         return jgroups.invokeRemotely(rpcCommands, mode, timeout, responseFilter, deliverOrder, anycast);
-      }
-      if (trace) {
-         log.tracef("Invoking %s, mode %s, filter %s", rpcCommands, mode, responseFilter);
-      }
-      Address singleRecipient = null;
-      Address[] actualRecipients = null;
-      CompletableFuture<Response> singleFuture = null;
-      CompletableFuture<Response>[] futures;
-      if (mode == ResponseMode.ASYNCHRONOUS) {
-         futures = null;
-      } else if (rpcCommands.size() != 1) {
-         futures = new CompletableFuture[rpcCommands.size()];
-         actualRecipients = new Address[rpcCommands.size()];
-      } else {
-         futures = null;
-      }
-      int futureIndex = 0;
-
-      long deadline = timeService.expectedEndTime(timeout, TimeUnit.MILLISECONDS);
-      for (Map.Entry<Address, ReplicableCommand> entry : rpcCommands.entrySet()) {
-         if (entry.getKey().equals(getAddress())) continue;
-         CompletableFuture<Response> responseFuture = null;
-         org.infinispan.commons.io.ByteBuffer buf = marshaller.objectToBuffer(entry.getValue());
-         if (mode != ResponseMode.ASYNCHRONOUS) {
-            responseFuture = new CompletableFuture<>();
-            if (futures != null) {
-               int index = futureIndex++;
-               futures[index] = responseFuture;
-               actualRecipients[index] = entry.getKey();
-            } else {
-               singleRecipient = entry.getKey();
-               singleFuture = responseFuture;
-            }
-         }
-         Connection connection = getConnection(entry.getKey());
-         writeAndRecordRequest(connection, buf, responseFuture, deadline, true);
-      }
-      switch (mode) {
-         case ASYNCHRONOUS:
-            return Collections.emptyMap();
-         case SYNCHRONOUS:
-         case SYNCHRONOUS_IGNORE_LEAVERS:
-         // even with wait for valid response we wait for all targets
-         case WAIT_FOR_VALID_RESPONSE:
-            if (singleFuture != null) {
-               return handleSingleRecipient(singleRecipient, singleFuture, responseFilter).get();
-            } else {
-               return handleAllRecipients(actualRecipients, futures, futureIndex, responseFilter).get();
-            }
-         default:
-            throw new IllegalArgumentException();
-      }
    }
 
    private void updateMembers(List<Address> members) {
@@ -570,7 +573,7 @@ public class TcpTransport implements Transport {
       synchronized (connection) {
          if (connection.channel == null) {
             log.debug("Opening channel to " + ipAddress);
-            SocketChannel channel = SocketChannel.open(new InetSocketAddress(ipAddress.getIpAddress(), ipAddress.getPort() + portOffset));
+            SocketChannel channel = SocketChannel.open(new InetSocketAddress(ipAddress.getIpAddress(), ipAddress.getPort() + PORT_OFFSET));
             channel.write(ByteBuffer.wrap(physicalAddress.getIpAddress().getAddress()));
             ByteBuffer portBuffer = ByteBuffer.allocate(Short.BYTES);
             portBuffer.putShort((short) (physicalAddress.getPort()));
@@ -762,7 +765,7 @@ public class TcpTransport implements Transport {
       try {
          serverSocketChannel = ServerSocketChannel.open();
          serverSocketChannel.configureBlocking(false);
-         serverSocketChannel.socket().bind(new InetSocketAddress(jgroupsPhysicalAddress.getIpAddress(), jgroupsPhysicalAddress.getPort() + portOffset));
+         serverSocketChannel.socket().bind(new InetSocketAddress(jgroupsPhysicalAddress.getIpAddress(), jgroupsPhysicalAddress.getPort() + PORT_OFFSET));
          acceptSelector = Selector.open();
          serverSocketChannel.register(acceptSelector, SelectionKey.OP_ACCEPT);
       } catch (IOException e) {
@@ -810,7 +813,7 @@ public class TcpTransport implements Transport {
       private ByteBuffer writeHeaderBuffer = ByteBuffer.allocate(HEADER_SIZE);
       // TODO: this is reset during reconnect
       private long requestId;
-      private final ConcurrentMap<Long, CompletableFuture<Response>> responses = new ConcurrentHashMap<>();
+      private final ConcurrentMap<Long, LazyCompletableFuture<Response>> responses = new ConcurrentHashMap<>();
       // TODO: better pool!
       private final ConcurrentLinkedQueue<ByteBuffer> bufferPool = new ConcurrentLinkedQueue<>();
 
@@ -870,7 +873,36 @@ public class TcpTransport implements Transport {
                   header.clear();
                   readBuffer.limit(size);
                   if (!readAtLeast(readBuffer, size)) return;
-                  getExecutor().execute(new HandleData(type, requestId, size, readBuffer, connection));
+                  if (FAST_RESPONSE_HANDLE && type == RESPONSE) {
+                     LazyCompletableFuture<Response> future = connection.responses.remove(requestId);
+                     if (future != null) {
+                        ByteBuffer buffer = readBuffer;
+                        long reqId = requestId;
+                        future.lazyComplete(() -> {
+                           try {
+                              Object object = marshaller.objectFromByteBuffer(buffer.array(), buffer.arrayOffset(), size);
+                              if (trace) {
+                                 log.tracef("Completing %s/%d (%08x) with %s", connection.channel, reqId, System.identityHashCode(future), object);
+                              }
+                              if (object == null || object instanceof Response) {
+                                 future.complete((Response) object);
+                              } else {
+                                 future.completeExceptionally(new CacheException(object + " is not a response"));
+                              }
+                           } catch (Exception e) {
+                              future.completeExceptionally(e);
+                           } finally {
+                              buffer.clear();
+                              connection.bufferPool.add(buffer);
+                           }
+                        }, getExecutor());
+                     } else {
+                        // this happens when we get response after timeout
+                        log.tracef("No future for request %s/%d", connection.channel, requestId);
+                     }
+                  } else {
+                     getExecutor().execute(new HandleData(type, requestId, size, readBuffer, connection));
+                  }
                   if (trace) {
                      log.tracef("read %s (%d) = %d bytes from %s = %08x", type == REQUEST ? "request" : type == RESPONSE ? "response" : "async_msg", requestId, size, connection.channel, System.identityHashCode(connection.channel));
                   }
@@ -897,24 +929,6 @@ public class TcpTransport implements Transport {
             }
          }
          return true;
-      }
-   }
-
-   public void handleResponse(Connection connection, long requestId, Object response) {
-      CompletableFuture<Response> future = connection.responses.remove(requestId);
-      if (future != null) {
-         if (trace) {
-            log.tracef
-               ("Completing %s/%d (%08x) with %s", connection.channel, requestId, System.identityHashCode(future), response);
-         }
-         if (response == null || response instanceof Response) {
-            future.complete((Response) response);
-         } else {
-            future.completeExceptionally(new CacheException(response + " is not a response"));
-         }
-      } else {
-         // this happens when we get response after timeout
-         log.tracef("No future for request %s/%d", connection.channel, requestId);
       }
    }
 
@@ -969,7 +983,20 @@ public class TcpTransport implements Transport {
                   globalHandler.handleFromCluster(connection.address, (ReplicableCommand) object, reply -> {}, DeliverOrder.NONE);
                   break;
                case RESPONSE:
-                  handleResponse(connection, requestId, object);
+                  CompletableFuture<Response> future = connection.responses.remove(requestId);
+                  if (future != null) {
+                     if (trace) {
+                        log.tracef("Completing %s/%d (%08x) with %s", connection.channel, requestId, System.identityHashCode(future), object);
+                     }
+                     if (object == null || object instanceof Response) {
+                        future.complete((Response) object);
+                     } else {
+                        future.completeExceptionally(new CacheException(object + " is not a response"));
+                     }
+                  } else {
+                     // this happens when we get response after timeout
+                     log.tracef("No future for request %s/%d", connection.channel, requestId);
+                  }
                   break;
             }
          } catch (ClassNotFoundException e) {
