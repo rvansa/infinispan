@@ -45,6 +45,9 @@ import java.nio.channels.SocketChannel;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 import static org.infinispan.factories.KnownComponentNames.GLOBAL_MARSHALLER;
 
@@ -231,37 +234,38 @@ public class TcpTransport implements Transport {
          log.tracef("%s sending request(%s) %d bytes to %s = %08x", getAddress(), responseFuture != null ? "sync" : "async", buf.getLength(), connection.channel, System.identityHashCode(connection.channel));
       }
       ByteBuffer buffer = toNioByteBuffer(buf);
-      long requestId = -1;
-      synchronized (connection.writeSync) {
-         ByteBuffer header = connection.writeHeaderBuffer;
-         try {
-            header.putInt(buf.getLength());
-            if (responseFuture != null) {
-               requestId = connection.requestId++;
-               // we have to register the request before sending out the message to the wire, or we
-               // might miss the response that arrives too soon
-               connection.responses.put(requestId, responseFuture);
-               header.put(REQUEST);
-               header.putLong(requestId);
-            } else {
-               header.put(ASYNC_MSG);
-            }
-            header.flip();
-            while (header.hasRemaining()) {
-               connection.channel.write(header);
-            }
-            while (buffer.hasRemaining()) {
-               connection.channel.write(buffer);
-            }
-         } catch (Exception e) {
-            log.error("Error writing", e);
-            throw e;
-         } finally {
-            header.clear();
-         }
+      long requestId = connection.requestCounter.getAndIncrement();
+      if (responseFuture != null) {
+         // we have to register the request before sending out the message to the wire, or we
+         // might miss the response that arrives too soon
+         connection.responses.put(requestId, responseFuture);
       }
-      if (trace) {
-         log.tracef("Sent request id %d (%08x)", requestId, System.identityHashCode(responseFuture));
+      if (connection.sendLock.tryLock()) {
+         try {
+            doSend(connection, responseFuture != null ? REQUEST : ASYNC_MSG, buffer, requestId);
+            doSendFromQueue(connection, 15);
+         } finally {
+            connection.sendLock.unlock();
+            scheduleSendFromQueue(connection);
+         }
+      } else {
+         try {
+            connection.sendQueue.put(new Message(responseFuture != null ? REQUEST : ASYNC_MSG, requestId, buffer));
+         } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new CacheException(e);
+         }
+         if (trace) {
+            log.tracef("Request id %d (%08x) enqueued", requestId, System.identityHashCode(responseFuture));
+         }
+         if (connection.sendLock.tryLock()) {
+            try {
+               doSendFromQueue(connection, 16);
+            } finally {
+               connection.sendLock.unlock();
+               scheduleSendFromQueue(connection);
+            }
+         }
       }
       if (responseFuture != null) {
          if (hasDeadline) {
@@ -279,6 +283,59 @@ public class TcpTransport implements Transport {
       }
    }
 
+   public void scheduleSendFromQueue(Connection connection) {
+      if (!connection.sendQueue.isEmpty()) {
+         getExecutor().execute(() -> {
+            if (connection.sendLock.tryLock()) {
+               try {
+                  doSendFromQueue(connection, Integer.MAX_VALUE);
+               } catch (IOException e) {
+                  throw new CacheException(e);
+               } finally {
+                  connection.sendLock.unlock();
+               }
+            }
+         });
+      }
+   }
+
+   // call only with locked connection
+   private void doSendFromQueue(Connection connection, int maxSent) throws IOException {
+      for (int sent = 0; sent < maxSent; ++sent) {
+         Message rb = connection.sendQueue.poll();
+         if (rb == null) return;
+         doSend(connection, rb.type, rb.buffer, rb.requestId);
+      }
+   }
+
+   // call only with locked connection
+   public void doSend(Connection connection, byte type, ByteBuffer buffer, long requestId) throws IOException {
+      ByteBuffer header = connection.writeHeaderBuffer;
+      try {
+         header.putInt(buffer.limit());
+         header.put(type);
+         if (type != ASYNC_MSG) {
+            header.putLong(requestId);
+         }
+         header.flip();
+         while (header.hasRemaining()) {
+            connection.channel.write(header);
+         }
+         while (buffer.hasRemaining()) {
+            connection.channel.write(buffer);
+         }
+      } catch (Exception e) {
+         log.error("Error writing", e);
+         throw e;
+      } finally {
+         header.clear();
+      }
+      if (trace) {
+         String msgType = type == REQUEST ? "request" : type == RESPONSE ? "response" : "async_msg";
+         log.tracef("Sent %s reqId %d, %d bytes to %s", msgType, requestId, buffer.limit(), connection.channel);
+      }
+   }
+
    public void responseTimeout(Connection connection, CompletableFuture<Response> responseFuture, long requestId) {
       responseFuture.completeExceptionally(new TimeoutException());
       CompletableFuture<Response> removed = connection.responses.remove(requestId);
@@ -291,25 +348,27 @@ public class TcpTransport implements Transport {
    private void writeResponse(Connection connection, long requestId, Object reply) {
       try {
          org.infinispan.commons.io.ByteBuffer buf = marshaller.objectToBuffer(reply);
-         if (trace) {
-            log.tracef("sending response reqId %d, %d bytes to %s", requestId, buf.getLength(), connection.channel);
-         }
-         ByteBuffer byteBuffer = toNioByteBuffer(buf);
-         synchronized (connection.writeSync) {
-            ByteBuffer header = connection.writeHeaderBuffer;
+         ByteBuffer buffer = toNioByteBuffer(buf);
+         if (connection.sendLock.tryLock()) {
             try {
-               header.putInt(buf.getLength());
-               header.put(RESPONSE);
-               header.putLong(requestId);
-               header.flip();
-               while (header.hasRemaining()) {
-                  connection.channel.write(header);
-               }
-               while (byteBuffer.hasRemaining()) {
-                  connection.channel.write(byteBuffer);
-               }
+               doSend(connection, RESPONSE, buffer, requestId);
+               doSendFromQueue(connection, 15);
             } finally {
-               header.clear();
+               connection.sendLock.unlock();
+               scheduleSendFromQueue(connection);
+            }
+         } else {
+            connection.sendQueue.put(new Message(RESPONSE, requestId, buffer));
+            if (trace) {
+               log.tracef("Response %d enqueued", requestId);
+            }
+            if (connection.sendLock.tryLock()) {
+               try {
+                  doSendFromQueue(connection, 16);
+               } finally {
+                  connection.sendLock.unlock();
+                  scheduleSendFromQueue(connection);
+               }
             }
          }
       } catch (Exception e) {
@@ -802,14 +861,27 @@ public class TcpTransport implements Transport {
       jgroups.checkTotalOrderSupported();
    }
 
+   private static class Message {
+      public final byte type;
+      public final long requestId;
+      public final ByteBuffer buffer;
+
+      public Message(byte type, long requestId, ByteBuffer buffer) {
+         this.type = type;
+         this.requestId = requestId;
+         this.buffer = buffer;
+      }
+   }
+
    public class Connection {
       private volatile SocketChannel channel;
-      private Object writeSync = new Object();
+      private Lock sendLock = new ReentrantLock();
+      private final ArrayBlockingQueue<Message> sendQueue = new ArrayBlockingQueue<>(16);
       private Address address;
       private final IpAddress ipAddress;
       private ByteBuffer writeHeaderBuffer = ByteBuffer.allocate(HEADER_SIZE);
       // TODO: this is reset during reconnect
-      private long requestId;
+      private final AtomicLong requestCounter = new AtomicLong();
       private final ConcurrentMap<Long, CompletableFuture<Response>> responses = new ConcurrentHashMap<>();
       // TODO: better pool!
       private final ConcurrentLinkedQueue<ByteBuffer> bufferPool = new ConcurrentLinkedQueue<>();
