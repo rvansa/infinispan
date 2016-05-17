@@ -804,10 +804,11 @@ public class TcpTransport implements Transport {
 
    public class Connection {
       private volatile SocketChannel channel;
-      private Object writeSync = new Object();
+      private Object writeSync = new Object(), readSync = new Object();
       private Address address;
       private final IpAddress ipAddress;
-      private ByteBuffer writeHeaderBuffer = ByteBuffer.allocate(HEADER_SIZE);
+      private final ByteBuffer readHeaderBuffer = ByteBuffer.allocate(HEADER_SIZE);
+      private final ByteBuffer writeHeaderBuffer = ByteBuffer.allocate(HEADER_SIZE);
       // TODO: this is reset during reconnect
       private long requestId;
       private final ConcurrentMap<Long, CompletableFuture<Response>> responses = new ConcurrentHashMap<>();
@@ -842,13 +843,13 @@ public class TcpTransport implements Transport {
       @Override
       public void run() {
          try {
-            ByteBuffer header = ByteBuffer.allocate(HEADER_SIZE);
-            while (true) {
-               int size;
-               byte type;
-               long requestId = -1;
-               ByteBuffer readBuffer = connection.bufferPool.poll();
-               try {
+            int size;
+            byte type;
+            long requestId = -1;
+            ByteBuffer readBuffer = connection.bufferPool.poll();
+            ByteBuffer header = connection.readHeaderBuffer;
+            try {
+               synchronized (connection.readSync) {
                   header.limit(HEADER_SIZE);
                   if (!readAtLeast(header, Integer.BYTES)) return;
                   size = header.getInt(0);
@@ -870,14 +871,15 @@ public class TcpTransport implements Transport {
                   header.clear();
                   readBuffer.limit(size);
                   if (!readAtLeast(readBuffer, size)) return;
-                  getExecutor().execute(new HandleData(type, requestId, size, readBuffer, connection));
-                  if (trace) {
-                     log.tracef("read %s (%d) = %d bytes from %s = %08x", type == REQUEST ? "request" : type == RESPONSE ? "response" : "async_msg", requestId, size, connection.channel, System.identityHashCode(connection.channel));
-                  }
-               } catch (ClosedChannelException e) {
-                  log.trace("Channel closed", e);
-                  return;
                }
+               getExecutor().execute(new ReadChannel(connection));
+               if (trace) {
+                  log.tracef("read %s (%d) = %d bytes from %s = %08x", type == REQUEST ? "request" : type == RESPONSE ? "response" : "async_msg", requestId, size, connection.channel, System.identityHashCode(connection.channel));
+               }
+               handleData(type, requestId, size, readBuffer, connection);
+            } catch (ClosedChannelException e) {
+               log.trace("Channel closed", e);
+               return;
             }
          } catch (IOException e) {
             try {
@@ -939,48 +941,30 @@ public class TcpTransport implements Transport {
       }
    }
 
-   public class HandleData implements Runnable {
-      private final byte type;
-      private final long requestId;
-      private final int size;
-      private final ByteBuffer buffer;
-      private final Connection connection;
-
-      public HandleData(byte type, long requestId, int size, ByteBuffer buffer, Connection connection) {
-         this.type = type;
-         this.requestId = requestId;
-         this.size = size;
-         this.buffer = buffer;
-         this.connection = connection;
-      }
-
-      @Override
-      public void run() {
-         try {
-            Object object = marshaller.objectFromByteBuffer(buffer.array(), buffer.arrayOffset(), size);
-            switch (type) {
-               case REQUEST:
-                  if (trace) {
-                     log.trace("Handling request " + requestId);
-                  }
-                  globalHandler.handleFromCluster(connection.address, (ReplicableCommand) object, reply -> writeResponse(connection, requestId, reply), DeliverOrder.NONE);
-                  break;
-               case ASYNC_MSG:
-                  globalHandler.handleFromCluster(connection.address, (ReplicableCommand) object, reply -> {}, DeliverOrder.NONE);
-                  break;
-               case RESPONSE:
-                  handleResponse(connection, requestId, object);
-                  break;
-            }
-         } catch (ClassNotFoundException e) {
-            throw new CacheException(e);
-         } catch (IOException e) {
-            throw new CacheException(e);
-         } finally {
-            buffer.clear();
-            connection.bufferPool.add(buffer);
+   public void handleData(byte type, long requestId, int size, ByteBuffer buffer, Connection connection) {
+      try {
+         Object object = marshaller.objectFromByteBuffer(buffer.array(), buffer.arrayOffset(), size);
+         switch (type) {
+            case REQUEST:
+               if (trace) {
+                  log.trace("Handling request " + requestId);
+               }
+               globalHandler.handleFromCluster(connection.address, (ReplicableCommand) object, reply -> writeResponse(connection, requestId, reply), DeliverOrder.NONE);
+               break;
+            case ASYNC_MSG:
+               globalHandler.handleFromCluster(connection.address, (ReplicableCommand) object, reply -> {}, DeliverOrder.NONE);
+               break;
+            case RESPONSE:
+               handleResponse(connection, requestId, object);
+               break;
          }
-
+      } catch (ClassNotFoundException e) {
+         throw new CacheException(e);
+      } catch (IOException e) {
+         throw new CacheException(e);
+      } finally {
+         buffer.clear();
+         connection.bufferPool.add(buffer);
       }
    }
 }
