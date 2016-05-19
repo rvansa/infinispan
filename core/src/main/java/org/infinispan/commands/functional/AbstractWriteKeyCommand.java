@@ -42,4 +42,9 @@ public abstract class AbstractWriteKeyCommand<K, V> extends AbstractDataWriteCom
    public Params getParams() {
       return params;
    }
+
+   @Override
+   public void fail() {
+      successful = false;
+   }
 }

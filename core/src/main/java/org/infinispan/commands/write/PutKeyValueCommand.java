@@ -212,14 +212,6 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand implements Meta
    }
 
    @Override
-   public void updateStatusFromRemoteResponse(Object remoteResponse) {
-      // Only putIfAbsent commands can fail
-      if (putIfAbsent) {
-         successful = remoteResponse == null;
-      }
-   }
-
-   @Override
    public void initBackupWriteRcpCommand(BackupWriteRcpCommand command) {
       command.setWrite(commandInvocationId, key, value, metadata, getFlagsBitSet(), getTopologyId());
    }
@@ -232,6 +224,11 @@ public class PutKeyValueCommand extends AbstractDataWriteCommand implements Meta
       } else {
          command.initWithoutReturnValue(successful);
       }
+   }
+
+   @Override
+   public void fail() {
+      successful = false;
    }
 
    private Object performPut(MVCCEntry<Object, Object> e, InvocationContext ctx) {
