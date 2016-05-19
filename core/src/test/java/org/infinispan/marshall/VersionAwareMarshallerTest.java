@@ -212,7 +212,7 @@ public class VersionAwareMarshallerTest extends AbstractInfinispanTest {
    }
 
    public void testImmutableResponseMarshalling() throws Exception {
-      marshallAndAssertEquality(UnsuccessfulResponse.INSTANCE);
+      marshallAndAssertEquality(UnsuccessfulResponse.EMPTY);
       marshallAndAssertEquality(UnsureResponse.INSTANCE);
    }
 
