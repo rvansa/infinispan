@@ -17,6 +17,7 @@ import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.distribution.ch.ConsistentHash;
 import org.infinispan.distribution.ch.ConsistentHashFactory;
 import org.infinispan.distribution.ch.KeyPartitioner;
+import org.infinispan.distribution.ch.impl.ScatteredConsistentHashFactory;
 import org.infinispan.distribution.ch.impl.SyncConsistentHashFactory;
 import org.infinispan.distribution.ch.impl.SyncReplicatedConsistentHashFactory;
 import org.infinispan.distribution.ch.impl.TopologyAwareSyncConsistentHashFactory;
@@ -113,7 +114,8 @@ public class StateTransferManagerImpl implements StateTransferManager {
             configuration.clustering().hash().numOwners(),
             configuration.clustering().stateTransfer().timeout(),
             configuration.transaction().transactionProtocol().isTotalOrder(),
-            configuration.clustering().cacheMode().isDistributed(),
+            configuration.clustering().cacheMode(),
+            configuration.clustering().partitionHandling().enabled(),
             configuration.clustering().hash().capacityFactor(),
             localTopologyManager.getPersistentUUID(),
             persistentStateChecksum);
@@ -149,9 +151,12 @@ public class StateTransferManagerImpl implements StateTransferManager {
                } else {
                   factory = new SyncConsistentHashFactory();
                }
-            } else {
-               // this is also used for invalidation mode
+            } else if (cacheMode.isReplicated() || cacheMode.isInvalidation()) {
                factory = new SyncReplicatedConsistentHashFactory();
+            } else if (cacheMode.isScattered()) {
+               factory = new ScatteredConsistentHashFactory();
+            } else {
+               throw new CacheException("Unexpected cache mode: " + cacheMode);
             }
          }
       }

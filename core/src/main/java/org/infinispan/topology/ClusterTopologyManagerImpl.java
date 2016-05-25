@@ -8,11 +8,13 @@ import static org.infinispan.util.logging.events.Messages.MESSAGES;
 
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Map.Entry;
 import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.CountDownLatch;
@@ -26,7 +28,8 @@ import java.util.concurrent.locks.ReentrantLock;
 import org.infinispan.commands.ReplicableCommand;
 import org.infinispan.commons.CacheException;
 import org.infinispan.commons.util.CollectionFactory;
-import org.infinispan.configuration.cache.Configuration;
+import org.infinispan.commons.util.InfinispanCollections;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.global.GlobalConfiguration;
 import org.infinispan.executors.LimitedExecutor;
 import org.infinispan.factories.GlobalComponentRegistry;
@@ -44,6 +47,7 @@ import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
 import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
 import org.infinispan.partitionhandling.AvailabilityMode;
 import org.infinispan.partitionhandling.impl.AvailabilityStrategy;
+import org.infinispan.partitionhandling.impl.LostDataCheck;
 import org.infinispan.partitionhandling.impl.PreferAvailabilityStrategy;
 import org.infinispan.partitionhandling.impl.PreferConsistencyStrategy;
 import org.infinispan.remoting.inboundhandler.DeliverOrder;
@@ -56,6 +60,7 @@ import org.infinispan.remoting.rpc.ResponseMode;
 import org.infinispan.remoting.transport.Address;
 import org.infinispan.remoting.transport.Transport;
 import org.infinispan.remoting.transport.jgroups.SuspectException;
+import org.infinispan.statetransfer.StateTransferType;
 import org.infinispan.util.concurrent.CompletableFutures;
 import org.infinispan.util.concurrent.TimeoutException;
 import org.infinispan.util.logging.Log;
@@ -219,7 +224,7 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
             return null;
          }
 
-         cacheStatus = initCacheStatusIfAbsent(cacheName);
+         cacheStatus = initCacheStatusIfAbsent(cacheName, joinInfo.getCacheMode(), joinInfo.isPartitionHandling());
       } finally {
          clusterManagerLock.unlock();
       }
@@ -413,20 +418,40 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       return true;
    }
 
-   private ClusterCacheStatus initCacheStatusIfAbsent(String cacheName) {
+   private ClusterCacheStatus initCacheStatusIfAbsent(String cacheName, CacheMode cacheMode, boolean partitionHandling) {
       return cacheStatusMap.computeIfAbsent(cacheName, (name) -> {
          // We assume that any cache with partition handling configured is already defined on all the nodes
          // (including the coordinator) before it starts on any node.
-         Configuration cacheConfiguration = cacheManager.getCacheConfiguration(cacheName);
-         AvailabilityStrategy availabilityStrategy;
-         if (cacheConfiguration != null && cacheConfiguration.clustering().partitionHandling().enabled()) {
-            availabilityStrategy = new PreferConsistencyStrategy(eventLogManager, persistentUUIDManager);
+         LostDataCheck lostDataCheck;
+         if (cacheMode.isScattered()) {
+            lostDataCheck = (stableCH, newMembers) -> {
+               // data can be lost if more than one node is lost
+               Set<Address> lostMembers = new HashSet<>(stableCH.getMembers());
+               lostMembers.removeAll(newMembers);
+               log.debugf("Stable CH members: %s, actual members: %s, lost members: %s",
+                  stableCH.getMembers(), newMembers, lostMembers);
+               return lostMembers.size() > 1;
+            };
          } else {
-            availabilityStrategy = new PreferAvailabilityStrategy(eventLogManager, persistentUUIDManager);
+            lostDataCheck = (stableCH, newMembers) -> {
+               // data is lost when some segment lost all owners
+               for (int i = 0; i < stableCH.getNumSegments(); i++) {
+                  if (!InfinispanCollections.containsAny(newMembers, stableCH.locateOwnersForSegment(i)))
+                     return true;
+               }
+               return false;
+            };
+         }
+         AvailabilityStrategy availabilityStrategy;
+         if (partitionHandling) {
+            availabilityStrategy = new PreferConsistencyStrategy(eventLogManager, persistentUUIDManager, lostDataCheck);
+         } else {
+            availabilityStrategy = new PreferAvailabilityStrategy(eventLogManager, persistentUUIDManager, lostDataCheck);
          }
          Optional<GlobalStateManager> globalStateManager = cacheManager.getGlobalComponentRegistry().getOptionalComponent(GlobalStateManager.class);
          Optional<ScopedPersistentState> persistedState = globalStateManager.flatMap(gsm -> gsm.readScopedState(cacheName));
-         return new ClusterCacheStatus(cacheName, availabilityStrategy, this, transport, persistedState, persistentUUIDManager);
+         return new ClusterCacheStatus(cacheName, availabilityStrategy, StateTransferType.from(cacheMode),
+               this, transport, persistedState, persistentUUIDManager);
       });
    }
 
@@ -459,8 +484,9 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
                   log.debug("Timed out waiting for cluster status responses, trying again");
                } else if (e.getCause() instanceof SuspectException) {
                   if (transport.getMembers().containsAll(clusterMembers)) {
-                     log.debug("Received a CacheNotFoundResponse from one of the members, trying again");
-                     Thread.sleep(getGlobalTimeout() / CLUSTER_RECOVERY_ATTEMPTS / 2);
+                     int sleepTime = getGlobalTimeout() / CLUSTER_RECOVERY_ATTEMPTS / 2;
+                     log.debugf(e, "Received an exception from one of the members, will try again after %d ms", sleepTime);
+                     Thread.sleep(sleepTime);
                   }
                }
                continue;
@@ -493,7 +519,8 @@ public class ClusterTopologyManagerImpl implements ClusterTopologyManager {
       CountDownLatch latch = new CountDownLatch(responsesByCache.size());
       LimitedExecutor cs = new LimitedExecutor("Merge-" + newViewId, asyncTransportExecutor, maxThreads);
       for (final Map.Entry<String, Map<Address, CacheStatusResponse>> e : responsesByCache.entrySet()) {
-         ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(e.getKey());
+         CacheJoinInfo joinInfo = e.getValue().values().stream().findAny().get().getCacheJoinInfo();
+         ClusterCacheStatus cacheStatus = initCacheStatusIfAbsent(e.getKey(), joinInfo.getCacheMode(), joinInfo.isPartitionHandling());
          cs.execute(() -> {
             try {
                cacheStatus.doMergePartitions(e.getValue());

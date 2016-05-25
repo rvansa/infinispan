@@ -59,7 +59,8 @@ public class DistributionManagerImpl implements DistributionManager {
       if (trace) log.tracef("starting distribution manager on %s", getAddress());
    }
 
-   private Address getAddress() {
+   @Override
+   public Address getAddress() {
       return rpcManager.getAddress();
    }
 

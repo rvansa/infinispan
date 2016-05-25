@@ -110,6 +110,14 @@ public class InboundTransferTask {
     * @return a {@code CompletableFuture} that completes when the transfer is done.
     */
    public CompletableFuture<Void> requestSegments() {
+      return startTransfer(StateRequestCommand.Type.START_STATE_TRANSFER);
+   }
+
+   public CompletableFuture<Void> requestKeys() {
+      return startTransfer(StateRequestCommand.Type.START_KEYS_TRANSFER);
+   }
+
+   private CompletableFuture<Void> startTransfer(StateRequestCommand.Type type) {
       if (!isCancelled) {
          Set<Integer> segmentsCopy = getSegments();
          if (segmentsCopy.isEmpty()) {
@@ -118,16 +126,16 @@ public class InboundTransferTask {
             return completionFuture;
          }
          if (trace) {
-            log.tracef("Requesting state from node %s for segments %s", source, segmentsCopy);
+            log.tracef("Requesting state (%s) from node %s for segments %s", type, source, segmentsCopy);
          }
          // start transfer of cache entries
          try {
-            StateRequestCommand cmd = commandsFactory.buildStateRequestCommand(StateRequestCommand.Type.START_STATE_TRANSFER, rpcManager.getAddress(), topologyId, segmentsCopy);
+            StateRequestCommand cmd = commandsFactory.buildStateRequestCommand(type, rpcManager.getAddress(), topologyId, segmentsCopy);
             Map<Address, Response> responses = rpcManager.invokeRemotely(Collections.singleton(source), cmd, rpcOptions);
             Response response = responses.get(source);
             if (response instanceof SuccessfulResponse) {
                if (trace) {
-                  log.tracef("Successfully requested state from node %s for segments %s", source, segmentsCopy);
+                  log.tracef("Successfully requested state (%s) from node %s for segments %s", type, source, segmentsCopy);
                }
                return completionFuture;
             } else {

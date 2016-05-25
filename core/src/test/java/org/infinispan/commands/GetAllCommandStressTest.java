@@ -35,13 +35,13 @@ public class GetAllCommandStressTest extends StressTest {
    protected final String CACHE_NAME = getClass().getName();
    protected final static int CACHE_COUNT = 6;
    protected final static int THREAD_MULTIPLIER = 4;
-   protected final static int CACHE_ENTRY_COUNT = 50000;
+   protected final static int CACHE_ENTRY_COUNT = 5000;
 
    @Override
    protected void createCacheManagers() throws Throwable {
       builderUsed = new ConfigurationBuilder();
       builderUsed.clustering().cacheMode(cacheMode);
-      builderUsed.clustering().stateTransfer().chunkSize(25000);
+      builderUsed.clustering().stateTransfer().chunkSize(200);
       // Uncomment this line to make it transactional
 //      builderUsed.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
       // This is increased just for the put all command when doing full tracing

@@ -35,6 +35,7 @@ import org.infinispan.context.impl.TxInvocationContext;
 import org.infinispan.factories.annotations.Inject;
 import org.infinispan.factories.annotations.Start;
 import org.infinispan.interceptors.InvocationFinallyFunction;
+import org.infinispan.interceptors.distribution.MissingOwnerException;
 import org.infinispan.interceptors.impl.BaseStateTransferInterceptor;
 import org.infinispan.remoting.RemoteException;
 import org.infinispan.remoting.responses.UnsureResponse;
@@ -190,9 +191,11 @@ public class StateTransferInterceptor extends BaseStateTransferInterceptor {
    }
 
    private <C extends VisitableCommand & TopologyAffectedCommand & FlagAffectedCommand> Object handleReadCommand(InvocationContext ctx, C command) throws Throwable {
-      if (isLocalOnly(command)) {
-         return invokeNext(ctx, command);
-      }
+      // TODO?
+      // Remote reads coming from ClusteredGetCommand have local flag set, but we want to check them
+//      if (isLocalOnly(command)) {
+//         return invokeNext(ctx, command);
+//      }
       updateTopologyId(command);
       return invokeNextAndHandle(ctx, command, handleReadCommandReturn);
    }
@@ -221,7 +224,7 @@ public class StateTransferInterceptor extends BaseStateTransferInterceptor {
             // TODO: provide a test case
             throw new IllegalStateException("Command was not sent with SYNCHRONOUS_IGNORE_LEAVERS?");
          }
-      } else if (ce instanceof OutdatedTopologyException) {
+      } else if (ce instanceof OutdatedTopologyException || ce instanceof MissingOwnerException) {
          if (trace)
             log.tracef("Retrying command because of topology change, current topology is %d: %s",
                   currentTopologyId, cmd);
@@ -288,7 +291,7 @@ public class StateTransferInterceptor extends BaseStateTransferInterceptor {
 
       int retryTopologyId = -1;
       int currentTopology = currentTopologyId();
-      if (t instanceof OutdatedTopologyException) {
+      if (t instanceof OutdatedTopologyException || t instanceof MissingOwnerException) {
          // This can only happen on the originator
          retryTopologyId = Math.max(currentTopology, txCommand.getTopologyId() + 1);
       } else if (t != null) {
@@ -420,7 +423,7 @@ public class StateTransferInterceptor extends BaseStateTransferInterceptor {
       while (ce instanceof RemoteException) {
          ce = ce.getCause();
       }
-      if (!(ce instanceof OutdatedTopologyException) && !(ce instanceof SuspectException) && !(ce instanceof AllOwnersLostException))
+      if (!(ce instanceof OutdatedTopologyException) && !(ce instanceof SuspectException) && !(ce instanceof AllOwnersLostException) && !(ce instanceof MissingOwnerException))
          throw t;
 
       // We increment the topology id so that updateTopologyIdAndWaitForTransactionData waits for the

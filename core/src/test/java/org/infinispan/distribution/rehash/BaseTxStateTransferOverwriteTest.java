@@ -2,6 +2,7 @@ package org.infinispan.distribution.rehash;
 
 import static java.util.concurrent.TimeUnit.SECONDS;
 import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Matchers.anyCollection;
 import static org.mockito.Matchers.anyInt;
 import static org.mockito.Matchers.anyString;
@@ -538,7 +539,7 @@ public abstract class BaseTxStateTransferOverwriteTest extends BaseDistFunctiona
 
             return forwardedAnswer.answer(invocation);
          }
-      }).when(mockConsumer).applyState(any(Address.class), anyInt(), anyCollection());
+      }).when(mockConsumer).applyState(any(Address.class), anyInt(), anyBoolean(), anyCollection());
       TestingUtil.replaceComponent(cache, StateConsumer.class, mockConsumer, true);
    }
 }

@@ -1,6 +1,7 @@
 package org.infinispan.statetransfer;
 
 import static org.mockito.Matchers.any;
+import static org.mockito.Matchers.anyBoolean;
 import static org.mockito.Mockito.anyInt;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -244,11 +245,11 @@ public class StateProviderTest {
       //todo [anistor] it seems that address 6 is not used for un-owned segments
       DefaultConsistentHash ch2 = chf.updateMembers(ch1, members2, null);
 
-      when(commandsFactory.buildStateResponseCommand(any(Address.class), anyInt(), any(Collection.class))).thenAnswer(new Answer<StateResponseCommand>() {
+      when(commandsFactory.buildStateResponseCommand(any(Address.class), anyInt(), anyBoolean(), any(Collection.class))).thenAnswer(new Answer<StateResponseCommand>() {
          @Override
          public StateResponseCommand answer(InvocationOnMock invocation) {
             return new StateResponseCommand(ByteString.fromString("testCache"), (Address) invocation.getArguments()[0],
-                  ((Integer) invocation.getArguments()[1]).intValue(),
+                  ((Integer) invocation.getArguments()[1]).intValue(), false,
                   (Collection<StateChunk>) invocation.getArguments()[2]);
          }
       });

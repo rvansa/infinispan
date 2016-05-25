@@ -66,7 +66,6 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
    protected final String CACHE_NAME = getClass().getName();
    protected ConfigurationBuilder builderUsed;
    protected final boolean tx;
-   protected final CacheMode cacheMode;
 
    static final Map<Integer, Object> forEachStructure = new ConcurrentHashMap<>();
    static final AtomicInteger forEachOffset = new AtomicInteger();
@@ -86,9 +85,8 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
    }
 
 
-   public BaseStreamTest(boolean tx, CacheMode mode) {
+   public BaseStreamTest(boolean tx) {
       this.tx = tx;
-      cacheMode = mode;
    }
 
    protected void enhanceConfiguration(ConfigurationBuilder builder) {
@@ -105,7 +103,6 @@ public abstract class BaseStreamTest extends MultipleCacheManagersTest {
          builderUsed.transaction().transactionMode(TransactionMode.TRANSACTIONAL);
       }
       if (cacheMode.isClustered()) {
-         builderUsed.clustering().hash().numOwners(2);
          builderUsed.clustering().stateTransfer().chunkSize(50);
          enhanceConfiguration(builderUsed);
          createClusteredCaches(3, CACHE_NAME, builderUsed);

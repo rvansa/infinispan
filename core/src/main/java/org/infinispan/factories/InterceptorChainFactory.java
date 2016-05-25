@@ -21,6 +21,7 @@ import org.infinispan.interceptors.distribution.L1LastChanceInterceptor;
 import org.infinispan.interceptors.distribution.L1NonTxInterceptor;
 import org.infinispan.interceptors.distribution.L1TxInterceptor;
 import org.infinispan.interceptors.distribution.NonTxDistributionInterceptor;
+import org.infinispan.interceptors.distribution.ScatteringInterceptor;
 import org.infinispan.interceptors.distribution.TriangleDistributionInterceptor;
 import org.infinispan.interceptors.distribution.TxDistributionInterceptor;
 import org.infinispan.interceptors.distribution.VersionedDistributionInterceptor;
@@ -41,6 +42,9 @@ import org.infinispan.interceptors.impl.InvocationContextInterceptor;
 import org.infinispan.interceptors.impl.IsMarshallableInterceptor;
 import org.infinispan.interceptors.impl.NotificationInterceptor;
 import org.infinispan.interceptors.impl.PassivationWriterInterceptor;
+import org.infinispan.interceptors.impl.PrefetchInterceptor;
+import org.infinispan.interceptors.impl.RetryingEntryWrappingInterceptor;
+import org.infinispan.interceptors.impl.ScatteredCacheWriterInterceptor;
 import org.infinispan.interceptors.impl.TransactionalStoreInterceptor;
 import org.infinispan.interceptors.impl.TxInterceptor;
 import org.infinispan.interceptors.impl.VersionedEntryWrappingInterceptor;
@@ -116,7 +120,7 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
       boolean isTotalOrder = configuration.transaction().transactionProtocol().isTotalOrder();
       CacheMode cacheMode = configuration.clustering().cacheMode();
 
-      if (cacheMode.isDistributed() || cacheMode.isReplicated()) {
+      if (cacheMode.isDistributed() || cacheMode.isReplicated() || cacheMode.isScattered()) {
          interceptorChain.appendInterceptor(createInterceptor(new DistributionBulkInterceptor<>(),
                  DistributionBulkInterceptor.class), false);
       }
@@ -145,7 +149,7 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
       // load the state transfer lock interceptor
       // the state transfer lock ensures that the cache member list is up-to-date
       // so it's necessary even if state transfer is disabled
-      if (cacheMode.isDistributed() || cacheMode.isReplicated()) {
+      if (cacheMode.isDistributed() || cacheMode.isReplicated() || cacheMode.isScattered()) {
          if (isTotalOrder) {
             interceptorChain.appendInterceptor(createInterceptor(new TotalOrderStateTransferInterceptor(),
                                                                  TotalOrderStateTransferInterceptor.class), false);
@@ -163,7 +167,7 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
 
       // The partition handling must run every time the state transfer interceptor retries a command (in non-transactional caches)
       if (configuration.clustering().partitionHandling().enabled()
-            && (cacheMode.isDistributed() || cacheMode.isReplicated())) {
+            && (cacheMode.isDistributed() || cacheMode.isReplicated() || cacheMode.isScattered())) {
          interceptorChain.appendInterceptor(createInterceptor(new PartitionHandlingInterceptor(), PartitionHandlingInterceptor.class), false);
       }
 
@@ -183,7 +187,7 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
       }
 
       //the total order protocol doesn't need locks
-      if (!isTotalOrder) {
+      if (!isTotalOrder && !cacheMode.isScattered()) {
          if (transactionMode.isTransactional()) {
             if (configuration.transaction().lockingMode() == LockingMode.PESSIMISTIC) {
                interceptorChain.appendInterceptor(createInterceptor(new PessimisticLockingInterceptor(), PessimisticLockingInterceptor.class), false);
@@ -222,6 +226,10 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
          interceptorChain.appendInterceptor(createInterceptor(new GroupingInterceptor(), GroupingInterceptor.class), false);
       }
 
+      if (cacheMode.isScattered()) {
+         interceptorChain.appendInterceptor(createInterceptor(new PrefetchInterceptor(), PrefetchInterceptor.class), false);
+      }
+
       if (needsVersionAwareComponents && cacheMode.isClustered()) {
          if (isTotalOrder) {
             interceptorChain.appendInterceptor(createInterceptor(new TotalOrderVersionedEntryWrappingInterceptor(),
@@ -229,8 +237,11 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
          } else {
             interceptorChain.appendInterceptor(createInterceptor(new VersionedEntryWrappingInterceptor(), VersionedEntryWrappingInterceptor.class), false);
          }
-      } else
+      } else if (cacheMode.isScattered()) {
+         interceptorChain.appendInterceptor(createInterceptor(new RetryingEntryWrappingInterceptor(), RetryingEntryWrappingInterceptor.class), false);
+      } else {
          interceptorChain.appendInterceptor(createInterceptor(new EntryWrappingInterceptor(), EntryWrappingInterceptor.class), false);
+      }
 
       if (configuration.persistence().usingStores()) {
          if (cacheMode.isClustered()) {
@@ -253,6 +264,9 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
                case REPL_ASYNC:
                   interceptorChain.appendInterceptor(createInterceptor(new DistCacheWriterInterceptor(), DistCacheWriterInterceptor.class), false);
                   break;
+               case SCATTERED_SYNC:
+                  interceptorChain.appendInterceptor(createInterceptor(new ScatteredCacheWriterInterceptor(), ScatteredCacheWriterInterceptor.class), false);
+                  break;
                default:
                   interceptorChain.appendInterceptor(createInterceptor(new CacheWriterInterceptor(), CacheWriterInterceptor.class), false);
                   break;
@@ -260,7 +274,7 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
          }
       }
 
-      if (configuration.deadlockDetection().enabled() && !isTotalOrder) {
+      if (configuration.deadlockDetection().enabled() && !isTotalOrder && !cacheMode.isScattered()) {
          interceptorChain.appendInterceptor(createInterceptor(new DeadlockDetectingInterceptor(), DeadlockDetectingInterceptor.class), false);
       }
 
@@ -304,6 +318,9 @@ public class InterceptorChainFactory extends AbstractNamedCacheComponentFactory 
                   interceptorChain.appendInterceptor(createInterceptor(new NonTxDistributionInterceptor(), NonTxDistributionInterceptor.class), false);
                }
             }
+            break;
+         case SCATTERED_SYNC:
+            interceptorChain.appendInterceptor(createInterceptor(new ScatteringInterceptor(), ScatteringInterceptor.class), false);
             break;
          case LOCAL:
             //Nothing...

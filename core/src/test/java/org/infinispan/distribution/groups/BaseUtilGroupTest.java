@@ -4,9 +4,11 @@ import java.io.Serializable;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 
 import org.infinispan.AdvancedCache;
 import org.infinispan.Cache;
+import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.distribution.group.Group;
 import org.infinispan.distribution.group.GroupManager;
 import org.infinispan.marshall.core.ExternalPojo;
@@ -26,6 +28,7 @@ public abstract class BaseUtilGroupTest extends MultipleCacheManagersTest {
 
    protected BaseUtilGroupTest(TestCacheFactory factory) {
       this.factory = factory;
+      this.cacheMode = CacheMode.DIST_SYNC; // default for the transactional tests
    }
 
    @Override

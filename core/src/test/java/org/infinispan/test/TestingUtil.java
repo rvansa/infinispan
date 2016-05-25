@@ -236,8 +236,9 @@ public class TestingUtil {
          }
          StateTransferManager stateTransferManager = extractComponent(c, StateTransferManager.class);
          Address cacheAddress = c.getAdvancedCache().getRpcManager().getAddress();
+         CacheTopology cacheTopology;
          while (true) {
-            CacheTopology cacheTopology = stateTransferManager.getCacheTopology();
+            cacheTopology = stateTransferManager.getCacheTopology();
             boolean rebalanceInProgress;
             boolean chContainsAllMembers;
             boolean currentChIsBalanced;
@@ -286,7 +287,7 @@ public class TestingUtil {
 
             LockSupport.parkNanos(TimeUnit.MILLISECONDS.toNanos(100));
          }
-         log.trace("Node " + cacheAddress + " finished state transfer.");
+         log.trace("Node " + cacheAddress + " finished state transfer, has topology " + cacheTopology);
       }
    }
 

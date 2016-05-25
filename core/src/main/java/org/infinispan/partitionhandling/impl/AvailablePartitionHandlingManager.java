@@ -3,6 +3,7 @@ package org.infinispan.partitionhandling.impl;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
 import org.infinispan.commands.write.WriteCommand;
 import org.infinispan.container.versioning.EntryVersionsMap;
@@ -18,7 +19,17 @@ import org.infinispan.transaction.xa.GlobalTransaction;
  * @since 8.0
  */
 public class AvailablePartitionHandlingManager implements PartitionHandlingManager {
+   private static final CompletableFuture<AvailabilityMode> INCOMPLETE = new CompletableFuture<AvailabilityMode>() {
+      @Override
+      public boolean complete(AvailabilityMode value) {
+         throw new UnsupportedOperationException();
+      }
 
+      @Override
+      public boolean completeExceptionally(Throwable ex) {
+         throw new UnsupportedOperationException();
+      }
+   };
 
    private AvailablePartitionHandlingManager() {
    }
@@ -30,6 +41,11 @@ public class AvailablePartitionHandlingManager implements PartitionHandlingManag
    @Override
    public AvailabilityMode getAvailabilityMode() {
       return AvailabilityMode.AVAILABLE;
+   }
+
+   @Override
+   public CompletableFuture<AvailabilityMode> degradedFuture() {
+      return INCOMPLETE;
    }
 
    @Override

@@ -108,7 +108,7 @@ public class QueueAsyncInvocationStage extends SimpleAsyncInvocationStage implem
                future.completeExceptionally(throwable);
             }
             return;
-         }
+         } else log.tracef("Running %s(%s, %s)", function, rv, throwable);
 
          // Run the handler
          try {

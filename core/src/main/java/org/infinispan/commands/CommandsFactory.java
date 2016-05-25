@@ -58,6 +58,7 @@ import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.commands.write.PrimaryMultiKeyAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -340,7 +341,7 @@ public interface CommandsFactory {
    /**
     * Builds a StateResponseCommand used for pushing cache entries to another node in response to a StateRequestCommand.
     */
-   StateResponseCommand buildStateResponseCommand(Address sender, int viewId, Collection<StateChunk> stateChunks);
+   StateResponseCommand buildStateResponseCommand(Address sender, int viewId, boolean pushTransfer, Collection<StateChunk> stateChunks);
 
    /**
     * Retrieves the cache name this CommandFactory is set up to construct commands for.
@@ -510,4 +511,6 @@ public interface CommandsFactory {
    BackupWriteRcpCommand buildBackupWriteRcpCommand(DataWriteCommand command);
 
    BackupPutMapRcpCommand buildBackupPutMapRcpCommand(PutMapCommand command);
+
+   InvalidateVersionsCommand buildInvalidateVersionsCommand(Object[] keys, long[] versions, boolean removed);
 }

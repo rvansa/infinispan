@@ -47,6 +47,7 @@ import org.infinispan.commands.write.ClearCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.commands.write.PrimaryMultiKeyAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -184,6 +185,9 @@ public class RemoteCommandsFactory {
                break;
             case ReplicableCommandManagerFunction.COMMAND_ID:
                command = new ReplicableCommandManagerFunction();
+               break;
+            case InvalidateVersionsCommand.COMMAND_ID:
+               command = new InvalidateVersionsCommand();
                break;
             case ReadOnlyKeyCommand.COMMAND_ID:
                command = new ReadOnlyKeyCommand();

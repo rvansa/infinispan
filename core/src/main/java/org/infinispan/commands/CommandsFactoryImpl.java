@@ -66,6 +66,7 @@ import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
 import org.infinispan.commands.write.InvalidateL1Command;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.commands.write.PrimaryMultiKeyAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -546,6 +547,9 @@ public class CommandsFactoryImpl implements CommandsFactory {
          case BackupPutMapRcpCommand.COMMAND_ID:
             ((BackupPutMapRcpCommand) c).init(icf, interceptorChain, notifier);
             break;
+         case InvalidateVersionsCommand.COMMAND_ID:
+            InvalidateVersionsCommand invalidateVersionsCommand = (InvalidateVersionsCommand) c;
+            invalidateVersionsCommand.init(dataContainer);
          default:
             ModuleCommandInitializer mci = moduleCommandInitializers.get(c.getCommandId());
             if (mci != null) {
@@ -577,8 +581,8 @@ public class CommandsFactoryImpl implements CommandsFactory {
    }
 
    @Override
-   public StateResponseCommand buildStateResponseCommand(Address sender, int topologyId, Collection<StateChunk> stateChunks) {
-      return new StateResponseCommand(cacheName, sender, topologyId, stateChunks);
+   public StateResponseCommand buildStateResponseCommand(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks) {
+      return new StateResponseCommand(cacheName, sender, topologyId, pushTransfer, stateChunks);
    }
 
    @Override
@@ -732,6 +736,11 @@ public class CommandsFactoryImpl implements CommandsFactory {
    @Override
    public <K, V, R> ReadWriteManyEntriesCommand<K, V, R> buildReadWriteManyEntriesCommand(Map<? extends K, ? extends V> entries, BiFunction<V, ReadWriteEntryView<K, V>, R> f, Params params) {
       return new ReadWriteManyEntriesCommand<>(entries, f, params, generateUUID(transactional));
+   }
+
+   @Override
+   public InvalidateVersionsCommand buildInvalidateVersionsCommand(Object[] keys, long[] versions, boolean removed) {
+      return new InvalidateVersionsCommand(keys, versions, removed);
    }
 
    @Override

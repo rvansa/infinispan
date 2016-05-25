@@ -20,7 +20,7 @@ public abstract class AbstractDataCommand implements DataCommand {
 
    protected AbstractDataCommand(Object key, long flagsBitSet) {
       this.key = key;
-      this.flags = flagsBitSet;
+      setFlagsBitSet(flagsBitSet);
    }
 
    protected AbstractDataCommand() {
@@ -67,7 +67,7 @@ public abstract class AbstractDataCommand implements DataCommand {
          return false;
       }
       AbstractDataCommand other = (AbstractDataCommand) obj;
-      return flags == other.flags && Objects.equals(key, other.key);
+      return getFlagsBitSet() == other.getFlagsBitSet() && Objects.equals(key, other.key);
    }
 
    @Override

@@ -68,6 +68,7 @@ import org.infinispan.commands.write.DataWriteCommand;
 import org.infinispan.commands.write.EvictCommand;
 import org.infinispan.commands.write.ExceptionAckCommand;
 import org.infinispan.commands.write.InvalidateCommand;
+import org.infinispan.commands.write.InvalidateVersionsCommand;
 import org.infinispan.commands.write.PrimaryAckCommand;
 import org.infinispan.commands.write.PrimaryMultiKeyAckCommand;
 import org.infinispan.commands.write.PutKeyValueCommand;
@@ -295,8 +296,8 @@ public class ControlledCommandFactory implements CommandsFactory {
    }
 
    @Override
-   public StateResponseCommand buildStateResponseCommand(Address sender, int topologyId, Collection<StateChunk> stateChunks) {
-      return actual.buildStateResponseCommand(sender, topologyId, stateChunks);
+   public StateResponseCommand buildStateResponseCommand(Address sender, int topologyId, boolean pushTransfer, Collection<StateChunk> stateChunks) {
+      return actual.buildStateResponseCommand(sender, topologyId, pushTransfer, stateChunks);
    }
 
    @Override
@@ -485,4 +486,10 @@ public class ControlledCommandFactory implements CommandsFactory {
    public BackupPutMapRcpCommand buildBackupPutMapRcpCommand(PutMapCommand command) {
       return actual.buildBackupPutMapRcpCommand(command);
    }
+
+   @Override
+   public InvalidateVersionsCommand buildInvalidateVersionsCommand(Object[] keys, long[] versions, boolean removed) {
+      return actual.buildInvalidateVersionsCommand(keys, versions, removed);
+   }
+
 }

@@ -63,7 +63,7 @@ public class AffinityUpdateCommand extends AbstractUpdateCommand {
          }
       }
 
-      return CompletableFuture.completedFuture(SuccessfulResponse.create(Boolean.TRUE));
+      return CompletableFuture.completedFuture(Boolean.TRUE);
    }
 
    private List<IndexManager> getIndexManagerForModifications(LuceneWork luceneWork) {

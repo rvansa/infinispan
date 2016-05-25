@@ -78,4 +78,9 @@ public class ClusteringDependentLogicDelegator implements ClusteringDependentLog
    public int getSegmentForKey(Object key) {
       return clusteringDependentLogic.getSegmentForKey(key);
    }
+
+   @Override
+   public void notifyCommitEntry(boolean created, boolean removed, boolean expired, CacheEntry entry, InvocationContext ctx, FlagAffectedCommand command, Object previousValue, Metadata previousMetadata) {
+      clusteringDependentLogic.notifyCommitEntry(created, removed, expired, entry, ctx, command, previousValue, previousMetadata);
+   }
 }

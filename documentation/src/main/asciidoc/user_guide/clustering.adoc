@@ -652,6 +652,9 @@ scattered mode less performant in very big clusters (this behaviour might be opt
 When a node crashes, the primary copy may be lost. Therefore, the cluster has to reconcile the backups
 and find out the last written backup copy. This process results in more network traffic during state transfer.
 
+Since the writer of data is also a backup, even if we specify machine/rack/site ids on the transport level the cluster
+cannot be resilient to more than one failure on the same machine/rack/site.
+
 Currently it is not possible to use scattered mode in transactional cache. Asynchronous replication
 is not supported either; use asynchronous Cache API instead.
 

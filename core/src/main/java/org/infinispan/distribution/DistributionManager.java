@@ -88,4 +88,6 @@ public interface DistributionManager {
     * @return true if join is in progress, false otherwise
     */
    boolean isJoinComplete();
+
+   Address getAddress();
 }

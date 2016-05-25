@@ -28,10 +28,10 @@ public class DistributionInfo {
             primary = self;
          } else if (index > 0) {
             ownership = Ownership.BACKUP;
-            primary = owners.get(0);
+            primary = owners.isEmpty() ? null : owners.get(0);
          } else {
             ownership = Ownership.NON_OWNER;
-            primary = owners.get(0);
+            primary = owners.isEmpty() ? null : owners.get(0);
          }
       }
    }

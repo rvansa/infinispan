@@ -1086,8 +1086,8 @@ public interface Log extends BasicLogger {
    @Message(value = "Unable to acquire lock after %s for key %s and requestor %s. Lock is held by %s", id = 299)
    TimeoutException unableToAcquireLock(String timeout, Object key, Object requestor, Object owner);
 
-//   @Message(value = "There was an exception while processing retrieval of entry values", id = 300)
-//   CacheException exceptionProcessingEntryRetrievalValues(@Cause Throwable cause);
+   @Message(value = "There was an exception while processing retrieval of entry values", id = 300)
+   CacheException exceptionProcessingEntryRetrievalValues(@Cause Throwable cause);
 
 //   @Message(value = "Iterator response for identifier %s encountered unexpected exception", id = 301)
 //   CacheException exceptionProcessingIteratorResponse(UUID identifier, @Cause Throwable cause);
@@ -1520,4 +1520,17 @@ public interface Log extends BasicLogger {
    @LogMessage(level = ERROR)
    @Message(value = "Failure during leaver transactions cleanup", id = 441)
    void transactionCleanupError(@Cause Throwable e);
+
+   @Message(value = "Scattered cache supports only single owner.", id = 442)
+   CacheConfigurationException scatteredCacheNeedsSingleOwner();
+
+   @Message(value = "Invalidation batch size configuration options applies only to scattered caches.", id = 443)
+   CacheConfigurationException invalidationBatchSizeAppliesOnNonScattered();
+
+   @Message(value = "Scattered cache does not support transactional mode.", id = 444)
+   CacheConfigurationException scatteredCacheIsNonTransactional();
+
+   @LogMessage(level = ERROR)
+   @Message(value = "Failed retrieving max versions for segments. State transfer cannot continue.", id = 445)
+   void failedRetrievingMaxVersions(@Cause Throwable t);
 }
