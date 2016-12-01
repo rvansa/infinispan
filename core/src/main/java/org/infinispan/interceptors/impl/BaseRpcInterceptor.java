@@ -38,6 +38,18 @@ import org.infinispan.util.logging.Log;
  * @since 9.0
  */
 public abstract class BaseRpcInterceptor extends DDAsyncInterceptor {
+   private final static ResponseFilter SUCCESSFUL_OR_EXCEPTIONAL = new ResponseFilter() {
+      @Override
+      public boolean isAcceptable(Response response, Address sender) {
+         return response.isSuccessful() || response instanceof ExceptionResponse;
+      }
+
+      @Override
+      public boolean needMoreResponses() {
+         return true;
+      }
+   };
+
    protected boolean trace = getLog().isTraceEnabled();
 
    protected RpcManager rpcManager;
@@ -60,17 +72,8 @@ public abstract class BaseRpcInterceptor extends DDAsyncInterceptor {
       defaultSynchronous = cacheConfiguration.clustering().cacheMode().isSynchronous();
       syncCommitPhase = cacheConfiguration.transaction().syncCommitPhase();
       // This is a simplified state-less version of ClusteredGetResponseValidityFilter
-      staggeredOptions = rpcManager.getRpcOptionsBuilder(ResponseMode.WAIT_FOR_VALID_RESPONSE, DeliverOrder.NONE).responseFilter(new ResponseFilter() {
-         @Override
-         public boolean isAcceptable(Response response, Address sender) {
-            return response.isValid() || response instanceof ExceptionResponse;
-         }
-
-         @Override
-         public boolean needMoreResponses() {
-            return true;
-         }
-      }).build();
+      staggeredOptions = rpcManager.getRpcOptionsBuilder(ResponseMode.WAIT_FOR_VALID_RESPONSE, DeliverOrder.NONE)
+            .responseFilter(SUCCESSFUL_OR_EXCEPTIONAL).build();
       defaultSyncOptions = rpcManager.getDefaultRpcOptions(true);
       defaultAsyncOptions = rpcManager.getDefaultRpcOptions(false);
    }
