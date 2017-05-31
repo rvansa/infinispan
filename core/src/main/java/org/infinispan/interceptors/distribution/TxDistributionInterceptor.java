@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.BiFunction;
+import java.util.function.Function;
 
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.ReplicableCommand;
@@ -34,7 +35,6 @@ import org.infinispan.commands.functional.WriteOnlyKeyCommand;
 import org.infinispan.commands.functional.WriteOnlyKeyValueCommand;
 import org.infinispan.commands.functional.WriteOnlyManyCommand;
 import org.infinispan.commands.functional.WriteOnlyManyEntriesCommand;
-import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.tx.CommitCommand;
 import org.infinispan.commands.tx.PrepareCommand;
 import org.infinispan.commands.tx.RollbackCommand;
@@ -510,34 +510,31 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
    }
 
    @Override
-   protected CompletableFuture<Void> remoteGetAll(InvocationContext ctx, GetAllCommand command, Map<Address, List<Object>> requestedKeys) {
-      CompletableFuture<Void> cf = super.remoteGetAll(ctx, command, requestedKeys);
+   protected CompletableFuture<Void> handleRemotelyRetrievedKeys(InvocationContext ctx, CompletableFuture<Void> cf, Function<CompletableFuture<?>, List<?>> keysProvider) {
       if (!ctx.isInTxScope()) {
          return cf;
       }
-      for (List<Object> keys : requestedKeys.values()) {
-         List<List<Mutation>> mutations = getMutations(ctx, keys);
-         if (mutations == null || mutations.isEmpty()) {
-            continue;
-         }
-         cf = cf.thenRun(() -> {
-            Iterator<Object> keysIterator = keys.iterator();
-            Iterator<List<Mutation>> mutationsIterator = mutations.iterator();
-            for (; keysIterator.hasNext() && mutationsIterator.hasNext(); ) {
-               Object key = keysIterator.next();
-               entryFactory.wrapEntryForWriting(ctx, key, false, true);
-               MVCCEntry cacheEntry = (MVCCEntry) ctx.lookupEntry(key);
-               EntryView.ReadWriteEntryView readWriteEntryView = EntryViews.readWrite(cacheEntry);
-               for (Mutation mutation : mutationsIterator.next()) {
-                  mutation.apply(readWriteEntryView);
-                  cacheEntry.updatePreviousValue();
-               }
-            }
-            assert !keysIterator.hasNext();
-            assert !mutationsIterator.hasNext();
-         });
+      List<?> keys = keysProvider.apply(cf);
+      List<List<Mutation>> mutations = getMutations(ctx, keys);
+      if (mutations == null || mutations.isEmpty()) {
+         return cf;
       }
-      return cf;
+      return cf.thenRun(() -> {
+         Iterator<?> keysIterator = keys.iterator();
+         Iterator<List<Mutation>> mutationsIterator = mutations.iterator();
+         for (; keysIterator.hasNext() && mutationsIterator.hasNext(); ) {
+            Object key = keysIterator.next();
+            entryFactory.wrapEntryForWriting(ctx, key, false, true);
+            MVCCEntry cacheEntry = (MVCCEntry) ctx.lookupEntry(key);
+            EntryView.ReadWriteEntryView readWriteEntryView = EntryViews.readWrite(cacheEntry);
+            for (Mutation mutation : mutationsIterator.next()) {
+               mutation.apply(readWriteEntryView);
+               cacheEntry.updatePreviousValue();
+            }
+         }
+         assert !keysIterator.hasNext();
+         assert !mutationsIterator.hasNext();
+      });
    }
 
    protected RpcOptions createRpcOptions() {
@@ -562,7 +559,7 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       return mutations;
    }
 
-   private static List<List<Mutation>> getMutations(InvocationContext ctx, List<Object> keys) {
+   private static List<List<Mutation>> getMutations(InvocationContext ctx, List<?> keys) {
       if (!ctx.isInTxScope()) {
          return null;
       }

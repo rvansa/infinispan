@@ -5,9 +5,11 @@ import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.BiConsumer;
@@ -80,6 +82,7 @@ import org.infinispan.util.logging.LogFactory;
 public abstract class BaseDistributionInterceptor extends ClusteringInterceptor {
    private static final Log log = LogFactory.getLog(BaseDistributionInterceptor.class);
    private static final boolean trace = log.isTraceEnabled();
+   private static final Object LOST_PLACEHOLDER = new Object();
 
    protected DistributionManager dm;
    protected RemoteValueRetrievedListener rvrl;
@@ -378,55 +381,157 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       }
 
       LocalizedCacheTopology cacheTopology = checkTopologyId(command);
-      Map<Address, List<Object>> requestedKeys = getKeysByOwner(ctx, command.getKeys(), cacheTopology, null);
+      Map<Address, List<Object>> requestedKeys = getKeysByOwner(ctx, command.getKeys(), cacheTopology, null, null);
       if (requestedKeys.isEmpty()) {
          return invokeNext(ctx, command);
       }
 
-      CompletableFuture<Void> allFuture = remoteGetAll(ctx, command, requestedKeys);
-      return asyncInvokeNext(ctx, command, allFuture);
-   }
-
-   protected CompletableFuture<Void> remoteGetAll(InvocationContext ctx, GetAllCommand command, Map<Address, List<Object>> requestedKeys) {
       GlobalTransaction gtx = ctx.isInTxScope() ? ((TxInvocationContext) ctx).getGlobalTransaction() : null;
-      CompletableFutureWithCounter allFuture = new CompletableFutureWithCounter(requestedKeys.size());
+      ClusteredGetAllFuture allFuture = new ClusteredGetAllFuture(requestedKeys.size(), command);
 
       for (Map.Entry<Address, List<Object>> pair : requestedKeys.entrySet()) {
-         List<Object> keys = pair.getValue();
-         ClusteredGetAllCommand clusteredGetAllCommand = cf.buildClusteredGetAllCommand(keys, command.getFlagsBitSet(), gtx);
+         ClusteredGetAllCommand clusteredGetAllCommand = cf.buildClusteredGetAllCommand(pair.getValue(), command.getFlagsBitSet(), gtx);
          clusteredGetAllCommand.setTopologyId(command.getTopologyId());
-         rpcManager.invokeRemotelyAsync(Collections.singleton(pair.getKey()), clusteredGetAllCommand, syncIgnoreLeavers).whenComplete((responseMap, throwable) -> {
-            if (throwable != null) {
-               allFuture.completeExceptionally(throwable);
-            }
-            if (responseMap.isEmpty()) {
-               allFuture.completeExceptionally(OutdatedTopologyException.INSTANCE);
-            }
-            Response response = getSingleSuccessfulResponseOrFail(responseMap, allFuture);
-            if (response == null) return;
-            Object responseValue = ((SuccessfulResponse) response).getResponseValue();
-            if (responseValue instanceof InternalCacheValue[]) {
-               InternalCacheValue[] values = (InternalCacheValue[]) responseValue;
-               int counterValue;
-               synchronized (allFuture) {
-                  for (int i = 0; i < keys.size(); ++i) {
-                     Object key = keys.get(i);
-                     InternalCacheValue value = values[i];
-                     CacheEntry entry = value == null ? NullCacheEntry.getInstance() : value.toInternalCacheEntry(key);
-                     wrapRemoteEntry(ctx, key, entry, false);
-                  }
-                  counterValue = --allFuture.counter;
+         Set<Address> target = Collections.singleton(pair.getKey());
+         rpcManager.invokeRemotelyAsync(target, clusteredGetAllCommand, syncIgnoreLeavers)
+               .whenComplete(new ClusteredGetAllHandler(allFuture, ctx, command, pair.getValue(), target));
+      }
+      return asyncValue(handleRemotelyRetrievedKeys(ctx, allFuture, allFuture)).thenApply(ctx, command, allFuture);
+   }
+
+   protected CompletableFuture<Void> handleRemotelyRetrievedKeys(InvocationContext ctx, CompletableFuture<Void> future, Function<CompletableFuture<?>, List<?>> keysProvider) {
+      return future;
+   }
+
+   /**
+    * {@link #completeExceptionally(Throwable)} must be called from synchronized block since we must not complete
+    * the future (exceptionally) when we're accessing the context - if there was an exception and we would retry,
+    * the context could be accessed concurrently by dangling handlers and retry execution (that does not synchronize
+    * on the same future).
+    */
+   private class ClusteredGetAllFuture extends CompletableFuture<Void> implements InvocationSuccessFunction, Function<CompletableFuture<?>, List<?>> {
+      private GetAllCommand localCommand;
+      private int counter;
+
+      public ClusteredGetAllFuture(int counter, GetAllCommand localCommand) {
+         this.counter = counter;
+         this.localCommand = localCommand;
+      }
+
+      @Override
+      public synchronized boolean completeExceptionally(Throwable ex) {
+         return super.completeExceptionally(ex);
+      }
+
+      @Override
+      public Object apply(InvocationContext rCtx, VisitableCommand rCommand, Object rv) throws Throwable {
+         assert rv == null; // value with which the allFuture has been completed
+         return invokeNext(rCtx, localCommand);
+      }
+
+      @Override
+      public List<?> apply(CompletableFuture<?> cf) {
+         // we could use Supplier<List<?>> but that would result in a clash of CompletableFuture.get() and Supplier.get()
+         assert cf == this;
+         return new ArrayList<>(localCommand.getKeys());
+      }
+   }
+
+   private class ClusteredGetAllHandler implements BiConsumer<Map<Address, Response>, Throwable> {
+      private final ClusteredGetAllFuture allFuture;
+      private final InvocationContext ctx;
+      private final GetAllCommand command;
+      private final List<?> keys;
+      private final Collection<Address> contactedNodes;
+
+      private ClusteredGetAllHandler(ClusteredGetAllFuture allFuture, InvocationContext ctx, GetAllCommand command, List<?> keys, Collection<Address> contactedNodes) {
+         this.allFuture = allFuture;
+         this.keys = keys;
+         this.ctx = ctx;
+         this.command = command;
+         this.contactedNodes = contactedNodes;
+      }
+
+      @Override
+      public void accept(Map<Address, Response> responseMap, Throwable throwable) {
+         if (throwable != null) {
+            allFuture.completeExceptionally(throwable);
+            return;
+         }
+         Response response = getSingleReadResponseOrFail(responseMap, allFuture);
+         if (response == null) {
+            if (!allFuture.isDone()) {
+               // When we did not get any successful response but the future was not exceptionally completed
+               // that means that the node got suspected and we have to contact other owners
+               try {
+                  handleMissingResponse();
+               } catch (Throwable t) {
+                  allFuture.completeExceptionally(t);
                }
-               // complete the future after sync block!
-               if (counterValue == 0) {
+            }
+            return;
+         }
+         Object responseValue = ((SuccessfulResponse) response).getResponseValue();
+         if (responseValue instanceof InternalCacheValue[]) {
+            InternalCacheValue[] values = (InternalCacheValue[]) responseValue;
+            synchronized (allFuture) {
+               // Check if other handlers haven't finished with an exception
+               if (allFuture.isDone()) {
+                  return;
+               }
+               for (int i = 0; i < keys.size(); ++i) {
+                  Object key = keys.get(i);
+                  InternalCacheValue value = values[i];
+                  CacheEntry entry = value == null ? NullCacheEntry.getInstance() : value.toInternalCacheEntry(key);
+                  wrapRemoteEntry(ctx, key, entry, false);
+               }
+               if (--allFuture.counter == 0) {
                   allFuture.complete(null);
                }
-            } else {
-               allFuture.completeExceptionally(new IllegalStateException("Unexpected response value: " + responseValue));
             }
-         });
+         } else {
+            allFuture.completeExceptionally(new IllegalStateException("Unexpected response value: " + responseValue));
+         }
       }
-      return allFuture;
+
+      private void handleMissingResponse() {
+         GlobalTransaction gtx = ctx.isInTxScope() ? ((TxInvocationContext) ctx).getGlobalTransaction() : null;
+
+         LocalizedCacheTopology cacheTopology = checkTopologyId(command);
+         Map<Address, List<Object>> requestedKeys = getKeysByOwner(ctx, keys, cacheTopology, null, contactedNodes);
+         synchronized (allFuture) {
+            allFuture.counter += requestedKeys.size();
+         }
+         for (Map.Entry<Address, List<Object>> pair : requestedKeys.entrySet()) {
+            ClusteredGetAllCommand clusteredGetAllCommand = cf.buildClusteredGetAllCommand(pair.getValue(), command.getFlagsBitSet(), gtx);
+            clusteredGetAllCommand.setTopologyId(command.getTopologyId());
+            List<Address> contactedNodes = new ArrayList<>(this.contactedNodes.size() + 1);
+            contactedNodes.addAll(this.contactedNodes);
+            contactedNodes.add(pair.getKey());
+            keys.removeAll(pair.getValue());
+            rpcManager.invokeRemotelyAsync(Collections.singleton(pair.getKey()), clusteredGetAllCommand, syncIgnoreLeavers)
+                  .whenComplete(new ClusteredGetAllHandler(allFuture, ctx, command, pair.getValue(), contactedNodes));
+         }
+         if (!keys.isEmpty()) {
+            // current keys don't have any owner left, we have to remove them
+            synchronized (allFuture) {
+               Set<?> strippedKeys = new HashSet<>(allFuture.localCommand.getKeys());
+               strippedKeys.removeAll(keys);
+               // We can't just call command.setKeys() - interceptors might compare keys and actual result set
+               allFuture.localCommand = cf.buildGetAllCommand(strippedKeys, command.getFlagsBitSet(), command.isReturnEntries());
+            }
+         } else if (trace) {
+            log.tracef("No owner found for keys %s, contacted nodes are %s", keys, contactedNodes);
+            for (Object key : keys) {
+               log.tracef("%s -> %s", key, cacheTopology.getDistribution(key).readOwners());
+            }
+         }
+         synchronized (allFuture) {
+            if (--allFuture.counter == 0) {
+               allFuture.complete(null);
+            }
+         }
+      }
    }
 
    @Override
@@ -454,7 +559,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       ConsistentHash ch = cacheTopology.getReadConsistentHash();
       int estimateForOneNode = 2 * keys.size() / ch.getMembers().size();
       List<Object> availableKeys = new ArrayList<>(estimateForOneNode);
-      Map<Address, List<Object>> requestedKeys = getKeysByOwner(ctx, keys, cacheTopology, availableKeys);
+      Map<Address, List<Object>> requestedKeys = getKeysByOwner(ctx, keys, cacheTopology, availableKeys, null);
 
       // TODO: while this works in a non-blocking way, the returned stream is not lazy as the functional
       // contract suggests. Traversable is also not honored as it is executed only locally on originator.
@@ -468,7 +573,10 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       int pos = availableKeys.size();
       for (Map.Entry<Address, List<Object>> addressKeys : requestedKeys.entrySet()) {
          List<Object> keysForAddress = addressKeys.getValue();
-         remoteReadMany(addressKeys.getKey(), keysForAddress, ctx, command, allFuture, pos, helper);
+         ReplicableCommand remoteCommand = helper.copyForRemote(command, keysForAddress, ctx);
+         Set<Address> target = Collections.singleton(addressKeys.getKey());
+         rpcManager.invokeRemotelyAsync(target, remoteCommand, syncIgnoreLeavers)
+            .whenComplete(new ReadManyHandler(allFuture, ctx, command, keysForAddress, target, pos, helper));
          pos += keysForAddress.size();
       }
       return asyncValue(allFuture);
@@ -493,32 +601,76 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       return invokeNextThenApply(ctx, command, remoteReturnHandler);
    }
 
-   private <C extends ReplicableCommand> void remoteReadMany(Address owner, List<Object> keys,
-                                                             InvocationContext ctx, C command,
-                                                             MergingCompletableFuture<Object> allFuture,
-                                                             int destinationIndex,
-                                                             ReadManyCommandHelper<C> helper) {
-      ReplicableCommand remoteCommand = helper.copyForRemote(command, keys, ctx);
-      rpcManager.invokeRemotelyAsync(Collections.singleton(owner), remoteCommand, defaultSyncOptions)
-         .whenComplete((responseMap, throwable) -> {
-            if (throwable != null) {
-               allFuture.completeExceptionally(throwable);
-            }
-            Response response = getSingleSuccessfulResponseOrFail(responseMap, allFuture);
-            if (response == null) return;
-            try {
-               Object responseValue = ((SuccessfulResponse) response).getResponseValue();
-               Object[] values = unwrapFunctionalManyResultOnOrigin(ctx, keys, responseValue);
-               if (values != null) {
-                  System.arraycopy(values, 0, allFuture.results, destinationIndex, values.length);
-                  allFuture.countDown();
-               } else {
-                  allFuture.completeExceptionally(new IllegalStateException("Unexpected response value " + responseValue));
+   private class ReadManyHandler<C extends TopologyAffectedCommand> implements BiConsumer<Map<Address, Response>, Throwable> {
+      private final MergingCompletableFuture<Object> allFuture;
+      private final InvocationContext ctx;
+      private final C command;
+      private final List<Object> keys;
+      private final int destinationIndex;
+      private final Collection<Address> contactedNodes;
+      private final ReadManyCommandHelper<C> helper;
+
+      private ReadManyHandler(MergingCompletableFuture<Object> allFuture, InvocationContext ctx, C command, List<Object> keys, Collection<Address> contactedNodes, int destinationIndex, ReadManyCommandHelper<C> helper) {
+         this.allFuture = allFuture;
+         this.ctx = ctx;
+         this.command = command;
+         this.keys = keys;
+         this.destinationIndex = destinationIndex;
+         this.contactedNodes = contactedNodes;
+         this.helper = helper;
+      }
+
+      @Override
+      public void accept(Map<Address, Response> responseMap, Throwable throwable) {
+         if (throwable != null) {
+            allFuture.completeExceptionally(throwable);
+            return;
+         }
+         Response response = getSingleReadResponseOrFail(responseMap, allFuture);
+         if (response == null) {
+            if (!allFuture.isDone()) {
+               try {
+                  handleMissingResponse();
+               } catch (Throwable t) {
+                  allFuture.completeExceptionally(t);
                }
-            } catch (Throwable t) {
-               allFuture.completeExceptionally(t);
             }
-         });
+            return;
+         }
+         try {
+            Object responseValue = ((SuccessfulResponse) response).getResponseValue();
+            Object[] values = unwrapFunctionalManyResultOnOrigin(ctx, keys, responseValue);
+            if (values != null) {
+               System.arraycopy(values, 0, allFuture.results, destinationIndex, values.length);
+               allFuture.countDown();
+            } else {
+               allFuture.completeExceptionally(new IllegalStateException("Unexpected response value " + responseValue));
+            }
+         } catch (Throwable t) {
+            allFuture.completeExceptionally(t);
+         }
+      }
+
+      private void handleMissingResponse() {
+         Map<Address, List<Object>> requestedKeys = getKeysByOwner(ctx, keys, checkTopologyId(command), null, contactedNodes);
+         int pos = destinationIndex;
+         for (Map.Entry<Address, List<Object>> addressKeys : requestedKeys.entrySet()) {
+            allFuture.increment();
+            List<Object> keysForAddress = addressKeys.getValue();
+            ReplicableCommand remoteCommand = helper.copyForRemote(command, keysForAddress, ctx);
+            Set<Address> target = Collections.singleton(addressKeys.getKey());
+            List<Address> contactedNodes = new ArrayList<>(this.contactedNodes.size() + 1);
+            contactedNodes.addAll(this.contactedNodes);
+            contactedNodes.add(addressKeys.getKey());
+            rpcManager.invokeRemotelyAsync(target, remoteCommand, syncIgnoreLeavers)
+                  .whenComplete(new ReadManyHandler(allFuture, ctx, command, keysForAddress, contactedNodes, pos, helper));
+            pos += keysForAddress.size();
+         }
+         for (int i = destinationIndex + keys.size() - 1; i >= pos; --i) {
+            allFuture.results[i] = LOST_PLACEHOLDER;
+         }
+         allFuture.countDown();
+      }
    }
 
    private <C extends VisitableCommand> void handleLocallyAvailableKeys(
@@ -545,7 +697,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
 
    private Map<Address, List<Object>> getKeysByOwner(InvocationContext ctx, Collection<?> keys,
                                                      LocalizedCacheTopology cacheTopology,
-                                                     List<Object> availableKeys) {
+                                                     List<Object> availableKeys, Collection<Address> ignoredOwners) {
       int capacity = cacheTopology.getMembers().size();
       Map<Address, List<Object>> requestedKeys = new HashMap<>(capacity);
       int estimateForOneNode = 2 * keys.size() / capacity;
@@ -559,6 +711,8 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
             for (Address address : distributionInfo.readOwners()) {
                if (address.equals(rpcManager.getAddress())) {
                   throw new IllegalStateException("Entry should be always wrapped!");
+               } else if (ignoredOwners != null && ignoredOwners.contains(address)) {
+                  continue;
                }
                List<Object> list = requestedKeys.get(address);
                if (list != null) {
@@ -568,9 +722,22 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
                }
             }
             if (!foundExisting) {
-               List<Object> list = new ArrayList<>(estimateForOneNode);
-               list.add(key);
-               requestedKeys.put(distributionInfo.primary(), list);
+               Address target = null;
+               if (ignoredOwners == null) {
+                  target = distributionInfo.primary();
+               } else {
+                  for (Address address : distributionInfo.readOwners()) {
+                     if (!ignoredOwners.contains(address)) {
+                        target = address;
+                     }
+                  }
+               }
+               // If all read owners should be ignored we won't put that entry anywhere
+               if (target != null) {
+                  List<Object> list = new ArrayList<>(estimateForOneNode);
+                  list.add(key);
+                  requestedKeys.put(target, list);
+               }
             }
          } else if (availableKeys != null) {
             availableKeys.add(key);
@@ -587,7 +754,27 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       return responseValue instanceof Object[] ? (Object[]) responseValue : null;
    }
 
-   protected Response getSingleSuccessfulResponseOrFail(Map<Address, Response> responseMap, CompletableFuture<?> future) {
+   protected static Response getSingleReadResponseOrFail(Map<Address, Response> responseMap, CompletableFuture<?> future) {
+      Iterator<Response> it = responseMap.values().iterator();
+      if (!it.hasNext()) {
+         future.completeExceptionally(new RpcException("Expected one response"));
+         return null;
+      }
+      Response response = it.next();
+      if (it.hasNext()) {
+         future.completeExceptionally(new IllegalStateException("Too many responses " + responseMap));
+         return null;
+      }
+      if (response.isSuccessful()) {
+         return response;
+      } else if (response instanceof UnsureResponse){
+         future.completeExceptionally(OutdatedTopologyException.INSTANCE);
+      }
+      // We won't throw AllOwnersLostException for multicommands, the caller has to limit the actual keys
+      return null;
+   }
+
+   protected static Response getSingleSuccessfulResponseOrFail(Map<Address, Response> responseMap, CompletableFuture<?> future) {
       Iterator<Response> it = responseMap.values().iterator();
       if (!it.hasNext()) {
          future.completeExceptionally(new RpcException("Expected one response"));
@@ -623,16 +810,6 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
 
       public void combine(ArrayIterator other) {
          throw new UnsupportedOperationException("The stream is not supposed to be parallel");
-      }
-   }
-
-   // This class sis very similar to CountDownCompletableFuture but it expect external synchronization,
-   // That comes handy when we have to sync anyway on different item, for example the context
-   private static class CompletableFutureWithCounter extends CompletableFuture<Void> {
-      private int counter;
-
-      public CompletableFutureWithCounter(int counter) {
-         this.counter = counter;
       }
    }
 
@@ -789,11 +966,6 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
       return !command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL | FlagBitSets.SKIP_REMOTE_LOOKUP);
    }
 
-   @FunctionalInterface
-   protected interface RemoteReadManyCommandBuilder<C> {
-      ReplicableCommand build(InvocationContext ctx, C command, List<Object> keys);
-   }
-
    protected interface ReadManyCommandHelper<C> extends InvocationSuccessFunction {
       Collection<?> keys(C command);
       C copyForLocal(C command, List<Object> keys);
@@ -833,7 +1005,7 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
 
       @Override
       public Object transformResult(Object[] results) {
-         return Arrays.stream(results);
+         return Arrays.stream(results).filter(o -> o != LOST_PLACEHOLDER);
       }
    }
 

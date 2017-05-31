@@ -8,9 +8,11 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReferenceFieldUpdater;
 import java.util.function.BiFunction;
 
+import org.infinispan.commands.AbstractVisitor;
 import org.infinispan.commands.FlagAffectedCommand;
 import org.infinispan.commands.TopologyAffectedCommand;
 import org.infinispan.commands.VisitableCommand;
+import org.infinispan.commands.functional.ReadOnlyKeyCommand;
 import org.infinispan.commands.read.GetAllCommand;
 import org.infinispan.commands.read.GetCacheEntryCommand;
 import org.infinispan.commands.read.GetKeyValueCommand;
@@ -223,7 +225,7 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
       } else if (ce instanceof AllOwnersLostException) {
          if (trace)
             getLog().tracef("All owners for command %s have been lost.", cmd);
-         return null;
+         return rCommand.acceptVisitor(rCtx, LostDataVisitor.INSTANCE);
       } else {
          throw t;
       }
@@ -319,6 +321,26 @@ public abstract class BaseStateTransferInterceptor extends DDAsyncInterceptor {
          if (!timeoutFutureUpdater.compareAndSet(this, null, timeoutFuture)) {
             timeoutFuture.cancel(false);
          }
+      }
+   }
+
+   // We don't need to implement GetAllCommand or ReadManyCommand here because these don't throw AllOwnersLostException
+   protected static class LostDataVisitor extends AbstractVisitor {
+      public static final LostDataVisitor INSTANCE = new LostDataVisitor();
+
+      @Override
+      public Object visitGetKeyValueCommand(InvocationContext ctx, GetKeyValueCommand command) throws Throwable {
+         return null;
+      }
+
+      @Override
+      public Object visitGetCacheEntryCommand(InvocationContext ctx, GetCacheEntryCommand command) throws Throwable {
+         return null;
+      }
+
+      @Override
+      public Object visitReadOnlyKeyCommand(InvocationContext ctx, ReadOnlyKeyCommand command) throws Throwable {
+         return command.performOnLostData();
       }
    }
 }
