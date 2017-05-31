@@ -53,8 +53,15 @@ public class TypeConverterDelegatingAdvancedCache<K, V> extends AbstractDelegati
    private final Function<K, K> unboxKey = this::unboxKey;
    private final Function<V, V> unboxValue = (InjectiveFunction & Function<V, V>) this::unboxValue;
 
+   private static InternalEntryFactory extractEntryFactory(AdvancedCache<?, ?> c) {
+      InternalEntryFactory entryFactory = null;
+      if (c instanceof TypeConverterDelegatingAdvancedCache)
+         entryFactory = ((TypeConverterDelegatingAdvancedCache) c).entryFactory;
+      return entryFactory;
+   }
+
    public TypeConverterDelegatingAdvancedCache(AdvancedCache<K, V> cache, TypeConverter converter) {
-      super(cache, c -> new TypeConverterDelegatingAdvancedCache<>(c, converter));
+      super(cache, c -> new TypeConverterDelegatingAdvancedCache<>(c, converter, extractEntryFactory(c)));
       this.converter = converter;
    }
 
@@ -62,6 +69,11 @@ public class TypeConverterDelegatingAdvancedCache<K, V> extends AbstractDelegati
                                                   TypeConverter converter) {
       super(cache, wrapper);
       this.converter = converter;
+   }
+
+   protected TypeConverterDelegatingAdvancedCache(AdvancedCache<K, V> cache, TypeConverter converter, InternalEntryFactory entryFactory) {
+      this(cache, converter);
+      this.entryFactory = entryFactory;
    }
 
    @Inject
@@ -716,32 +728,4 @@ public class TypeConverterDelegatingAdvancedCache<K, V> extends AbstractDelegati
    public void replaceAll(BiFunction<? super K, ? super V, ? extends V> function) {
       super.replaceAll(convertFunction(function));
    }
-
-   @Override
-   public AdvancedCache<K, V> with(ClassLoader classLoader) {
-      AdvancedCache<K, V> returned = super.with(classLoader);
-      if (returned != this && returned instanceof TypeConverterDelegatingAdvancedCache) {
-         ((TypeConverterDelegatingAdvancedCache) returned).entryFactory = this.entryFactory;
-      }
-      return returned;
-   }
-
-   @Override
-   public AdvancedCache<K, V> withFlags(Flag... flags) {
-      AdvancedCache<K, V> returned = super.withFlags(flags);
-      if (returned != this && returned instanceof TypeConverterDelegatingAdvancedCache) {
-         ((TypeConverterDelegatingAdvancedCache) returned).entryFactory = this.entryFactory;
-      }
-      return returned;
-   }
-
-   @Override
-   public AdvancedCache<K, V> withSubject(Subject subject) {
-      AdvancedCache<K, V> returned = super.withSubject(subject);
-      if (returned != this && returned instanceof TypeConverterDelegatingAdvancedCache) {
-         ((TypeConverterDelegatingAdvancedCache) returned).entryFactory = this.entryFactory;
-      }
-      return returned;
-   }
-
 }
