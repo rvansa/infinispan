@@ -1,8 +1,11 @@
 package org.infinispan.partitionhandling;
 
+import static org.infinispan.commons.marshall.MarshallableFunctions.returnReadOnlyFindOrNull;
+import static org.infinispan.commons.marshall.MarshallableFunctions.setValueConsumer;
+import static org.infinispan.commons.marshall.MarshallableFunctions.setValueReturnPrevOrNull;
 import static org.infinispan.test.Exceptions.expectException;
 import static org.testng.Assert.assertEquals;
-import static org.testng.Assert.fail;
+import static org.testng.AssertJUnit.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -10,14 +13,23 @@ import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
 import org.infinispan.Cache;
+import org.infinispan.commons.api.functional.FunctionalMap;
+import org.infinispan.commons.api.functional.Traversable;
+import org.infinispan.commons.marshall.MarshallableFunctions;
 import org.infinispan.configuration.cache.CacheMode;
 import org.infinispan.configuration.cache.ConfigurationBuilder;
+import org.infinispan.functional.impl.FunctionalMapImpl;
+import org.infinispan.functional.impl.ReadOnlyMapImpl;
+import org.infinispan.functional.impl.ReadWriteMapImpl;
+import org.infinispan.functional.impl.WriteOnlyMapImpl;
 import org.infinispan.notifications.Listener;
 import org.infinispan.notifications.cachemanagerlistener.annotation.ViewChanged;
 import org.infinispan.notifications.cachemanagerlistener.event.ViewChangedEvent;
@@ -278,12 +290,21 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
             // While we keep the null values in the map inside interceptor stack, these are removed in CacheImpl.getAll
             Map<Object, Object> expectedMap = expectedValue == null ? Collections.emptyMap() : Collections.singletonMap(k, expectedValue);
             assertEquals(c.getAdvancedCache().getAll(Collections.singleton(k)), expectedMap, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value: ");
+            assertEquals( ro(c).eval(k, returnReadOnlyFindOrNull()).join(), expectedValue);
+            Traversable traversable = ro(c).evalMany(Collections.singleton(k), returnReadOnlyFindOrNull());
+            assertEquals(traversable.collect(Collectors.toList()), Collections.singletonList(expectedValue));
          }
       }
 
       public void assertKeyAvailableForWrite(Object k, Object newValue) {
          for (Cache<Object, Object> c : cachesInThisPartition()) {
-            c.put(k, newValue);
+            c.put(k, "put_" + newValue);
+            assertEquals(rw(c).eval(k, "rw_eval_" + newValue, setValueReturnPrevOrNull()).join(), "put_" + newValue);
+            assertEquals(rw(c).evalMany(Collections.singletonMap(k, "rw_evalMany_" + newValue), setValueReturnPrevOrNull()).findAny().orElse(null), "rw_eval_" + newValue);
+            assertEquals(c.get(k), "rw_evalMany_" + newValue, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value");
+            wo(c).eval(k, "wo_eval_" + newValue, setValueConsumer()).join();
+            assertEquals(c.get(k), "wo_eval_" + newValue, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value");
+            wo(c).evalMany(Collections.singletonMap(k, newValue), setValueConsumer()).join();
             assertEquals(c.get(k), newValue, "Cache " + c.getAdvancedCache().getRpcManager().getAddress() + " doesn't see the right value");
          }
       }
@@ -294,9 +315,11 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
       }
 
       protected void assertKeyNotAvailableForRead(Object key) {
-         for (Cache<Object, ?> c : cachesInThisPartition()) {
+         for (Cache<Object, Object> c : cachesInThisPartition()) {
             expectException(AvailabilityException.class, () -> c.get(key));
             expectException(AvailabilityException.class, () -> c.getAdvancedCache().getAll(Collections.singleton(key)));
+            expectException(CompletionException.class, AvailabilityException.class, () -> ro(c).eval(key, returnReadOnlyFindOrNull()).join());
+            expectException(CompletionException.class, AvailabilityException.class, () -> ro(c).evalMany(Collections.singleton(key), returnReadOnlyFindOrNull()).findAny().orElse(null));
          }
       }
 
@@ -313,12 +336,12 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
 
       public void assertKeyNotAvailableForWrite(Object key) {
          for (Cache<Object, Object> c : cachesInThisPartition()) {
-            try {
-               c.put(key, key);
-               fail();
-            } catch (AvailabilityException ae) {
-               //expected!
-            }
+            expectException(AvailabilityException.class, () -> c.put(key, key));
+            expectException(AvailabilityException.class, () -> c.putAll(Collections.singletonMap(key, key)));
+            expectException(CompletionException.class, AvailabilityException.class, () -> rw(c).eval(key, key, setValueReturnPrevOrNull()).join());
+            expectException(CompletionException.class, AvailabilityException.class, () -> rw(c).evalMany(Collections.singletonMap(key, key), setValueReturnPrevOrNull()).findAny().orElse(null));
+            expectException(CompletionException.class, AvailabilityException.class, () -> wo(c).eval(key, key, MarshallableFunctions.setValueConsumer()).join());
+            expectException(CompletionException.class, AvailabilityException.class, () -> wo(c).evalMany(Collections.singletonMap(key, key), MarshallableFunctions.setValueConsumer()).join());
          }
       }
 
@@ -334,6 +357,19 @@ public class BasePartitionHandlingTest extends MultipleCacheManagersTest {
          }
       }
    }
+
+   private static FunctionalMap.ReadOnlyMap<Object, Object> ro(Cache<Object, Object> c) {
+      return ReadOnlyMapImpl.create(FunctionalMapImpl.create(c.getAdvancedCache()));
+   }
+
+   private static FunctionalMap.ReadWriteMap<Object, Object> rw(Cache<Object, Object> c) {
+      return ReadWriteMapImpl.create(FunctionalMapImpl.create(c.getAdvancedCache()));
+   }
+
+   private static FunctionalMap.WriteOnlyMap<Object, Object> wo(Cache<Object, Object> c) {
+      return WriteOnlyMapImpl.create(FunctionalMapImpl.create(c.getAdvancedCache()));
+   }
+
 
    protected void splitCluster(int[]... parts) {
       List<Address> allMembers = channel(0).getView().getMembers();
