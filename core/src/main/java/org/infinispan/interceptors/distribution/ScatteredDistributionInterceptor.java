@@ -449,6 +449,9 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             }
          }
          Metadata oldMetadata = oldEntry.getMetadata();
+         // Only state transfer and prefetch should see RemoteMetadata as old value and these should use
+         // commitSingleEntryIfNewer
+         assert !(oldMetadata instanceof RemoteMetadata);
          EntryVersion oldVersion = oldMetadata == null ? null : oldMetadata.version();
          if (oldVersion == null) {
             if (seenVersion != null) {
@@ -474,10 +477,8 @@ public class ScatteredDistributionInterceptor extends ClusteringInterceptor {
             }
             throw new ConcurrentChangeException();
          }
-         InequalVersionComparisonResult comparisonResult;
          if (oldVersion == null || newMetadata == null || newMetadata.version() == null
-            || (comparisonResult = oldMetadata.version().compareTo(newMetadata.version())) == InequalVersionComparisonResult.BEFORE
-            || (oldMetadata instanceof RemoteMetadata && comparisonResult == InequalVersionComparisonResult.EQUAL)) {
+            || oldMetadata.version().compareTo(newMetadata.version()) == InequalVersionComparisonResult.BEFORE) {
             previousValue.set(oldEntry.getValue());
             previousValue.set(oldMetadata);
             if (trace) {

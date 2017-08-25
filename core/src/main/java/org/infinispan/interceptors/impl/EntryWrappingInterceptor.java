@@ -350,6 +350,9 @@ public class EntryWrappingInterceptor extends DDAsyncInterceptor {
             entry.resetCurrentValue();
          }
       } else {
+         if (trace) {
+            log.tracef("This is a retry - removing looked up entries for keys", keys);
+         }
          ctx.removeLookedUpEntries(keys);
       }
    }

@@ -87,7 +87,7 @@ public class RemoteMetadata implements InternalMetadata {
    public String toString() {
       final StringBuilder sb = new StringBuilder("RemoteMetadata{");
       sb.append("address=").append(address);
-      sb.append(", version=").append(version);
+      sb.append(", version=").append(topologyId).append('/').append(version);
       sb.append('}');
       return sb.toString();
    }
