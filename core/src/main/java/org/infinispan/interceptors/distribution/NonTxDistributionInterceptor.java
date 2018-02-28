@@ -402,11 +402,17 @@ public class NonTxDistributionInterceptor extends BaseDistributionInterceptor {
 
    private List<CompletableFuture<?>> addRemoteGet(InvocationContext ctx, WriteCommand command,
                                                    List<CompletableFuture<?>> retrievals, Object key) throws Exception {
-      CacheEntry cacheEntry = ctx.lookupEntry(key);
+      CacheEntry cacheEntry;
+      // We need to synchronize access to the context since it will be updated from the remoteGet responses concurrently
+      synchronized (ctx) {
+         cacheEntry = ctx.lookupEntry(key);
+      }
       if (cacheEntry == null) {
          // this should be a rare situation, so we don't mind being a bit ineffective with the remote gets
          if (command.hasAnyFlag(FlagBitSets.SKIP_REMOTE_LOOKUP) || command.hasAnyFlag(FlagBitSets.CACHE_MODE_LOCAL)) {
-            entryFactory.wrapExternalEntry(ctx, key, null, false, true);
+            synchronized (ctx) {
+               entryFactory.wrapExternalEntry(ctx, key, null, false, true);
+            }
          } else {
             if (retrievals == null) {
                retrievals = new ArrayList<>();

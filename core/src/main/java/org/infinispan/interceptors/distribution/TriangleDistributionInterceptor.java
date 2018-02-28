@@ -543,10 +543,12 @@ public class TriangleDistributionInterceptor extends BaseDistributionInterceptor
          return CompletableFutures.completedNull();
       }
       final List<CompletableFuture<?>> futureList = new ArrayList<>(keys.size());
-      for (Object key : keys) {
-         CacheEntry cacheEntry = ctx.lookupEntry(key);
-         if (cacheEntry == null && cacheTopology.isWriteOwner(key)) {
-            wrapKeyExternally(ctx, command, key, futureList);
+      synchronized (ctx) {
+         for (Object key : keys) {
+            CacheEntry cacheEntry = ctx.lookupEntry(key);
+            if (cacheEntry == null && cacheTopology.isWriteOwner(key)) {
+               wrapKeyExternally(ctx, command, key, futureList);
+            }
          }
       }
       final int size = futureList.size();

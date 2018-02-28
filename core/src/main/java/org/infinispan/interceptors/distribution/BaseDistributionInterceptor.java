@@ -189,14 +189,18 @@ public abstract class BaseDistributionInterceptor extends ClusteringInterceptor 
                                 if (rvrl != null) {
                                    rvrl.remoteValueNotFound(key);
                                 }
-                                wrapRemoteEntry(ctx, key, NullCacheEntry.getInstance(), isWrite);
+                                synchronized (ctx) {
+                                   wrapRemoteEntry(ctx, key, NullCacheEntry.getInstance(), isWrite);
+                                }
                                 return;
                              }
                              InternalCacheEntry ice = ((InternalCacheValue) responseValue).toInternalCacheEntry(key);
                              if (rvrl != null) {
                                 rvrl.remoteValueFound(ice);
                              }
-                             wrapRemoteEntry(ctx, key, ice, isWrite);
+                             synchronized (ctx) {
+                                wrapRemoteEntry(ctx, key, ice, isWrite);
+                             }
                              return;
                           }
                           throw handleMissingSuccessfulResponse(r);

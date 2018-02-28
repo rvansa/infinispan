@@ -425,14 +425,16 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       for (Map.Entry<K, V> e : entries.entrySet()) {
          K key = e.getKey();
          if (ctx.isOriginLocal() || cacheTopology.isWriteOwner(key)) {
-            if (ctx.lookupEntry(key) == null) {
-               if (ignorePreviousValue) {
-                  entryFactory.wrapExternalEntry(ctx, key, null, false, true);
-               } else {
-                  if (remoteGets == null) {
-                     remoteGets = new ArrayList<>();
+            synchronized (ctx) {
+               if (ctx.lookupEntry(key) == null) {
+                  if (ignorePreviousValue) {
+                     entryFactory.wrapExternalEntry(ctx, key, null, false, true);
+                  } else {
+                     if (remoteGets == null) {
+                        remoteGets = new ArrayList<>();
+                     }
+                     remoteGets.add(remoteGet(ctx, command, key, true).toCompletableFuture());
                   }
-                  remoteGets.add(remoteGet(ctx, command, key, true).toCompletableFuture());
                }
             }
             filtered.put(key, e.getValue());
@@ -449,14 +451,16 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
       LocalizedCacheTopology cacheTopology = checkTopologyId(command);
       for (K key : keys) {
          if (ctx.isOriginLocal() || cacheTopology.isWriteOwner(key)) {
-            if (ctx.lookupEntry(key) == null) {
-               if (ignorePreviousValue) {
-                  entryFactory.wrapExternalEntry(ctx, key, null, false, true);
-               } else {
-                  if (remoteGets == null) {
-                     remoteGets = new ArrayList<>();
+            synchronized (ctx) {
+               if (ctx.lookupEntry(key) == null) {
+                  if (ignorePreviousValue) {
+                     entryFactory.wrapExternalEntry(ctx, key, null, false, true);
+                  } else {
+                     if (remoteGets == null) {
+                        remoteGets = new ArrayList<>();
+                     }
+                     remoteGets.add(remoteGet(ctx, command, key, true).toCompletableFuture());
                   }
-                  remoteGets.add(remoteGet(ctx, command, key, true).toCompletableFuture());
                }
             }
             filtered.add(key);
@@ -561,13 +565,15 @@ public class TxDistributionInterceptor extends BaseDistributionInterceptor {
          return cf;
       }
       return cf.thenRun(() -> {
-         entryFactory.wrapEntryForWriting(ctx, key, false, true);
-         MVCCEntry cacheEntry = (MVCCEntry) ctx.lookupEntry(key);
-         for (Mutation mutation : mutationsOnKey) {
-            EntryView.ReadWriteEntryView readWriteEntryView =
-                  EntryViews.readWrite(cacheEntry, mutation.keyDataConversion(), mutation.valueDataConversion());
-            mutation.apply(readWriteEntryView);
-            cacheEntry.updatePreviousValue();
+         synchronized (ctx) {
+            entryFactory.wrapEntryForWriting(ctx, key, false, true);
+            MVCCEntry cacheEntry = (MVCCEntry) ctx.lookupEntry(key);
+            for (Mutation mutation : mutationsOnKey) {
+               EntryView.ReadWriteEntryView readWriteEntryView =
+                     EntryViews.readWrite(cacheEntry, mutation.keyDataConversion(), mutation.valueDataConversion());
+               mutation.apply(readWriteEntryView);
+               cacheEntry.updatePreviousValue();
+            }
          }
       });
    }
